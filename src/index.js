@@ -53,6 +53,7 @@
 const { config, pools, poolCounters, queues, metrics } = require('./config');
 const { createCurriedRunner } = require('./executor');
 const { stream } = require('./stream-executor');
+const { warmupPool, getQueueLength } = require('./pool');
 const { validateTimeout, validatePoolSize } = require('./validation');
 const { deepFreeze } = require('./utils');
 const { 
@@ -370,6 +371,15 @@ const beeThreads = {
       validatePoolSize(options.poolSize);
       config.poolSize = options.poolSize;
     }
+    if (options.minThreads !== undefined) {
+      if (!Number.isInteger(options.minThreads) || options.minThreads < 0) {
+        throw new TypeError('minThreads must be a non-negative integer');
+      }
+      if (options.minThreads > config.poolSize) {
+        throw new TypeError('minThreads cannot exceed poolSize');
+      }
+      config.minThreads = options.minThreads;
+    }
     if (options.maxQueueSize !== undefined) {
       if (typeof options.maxQueueSize !== 'number' || options.maxQueueSize < 0) {
         throw new TypeError('maxQueueSize must be a non-negative number');
@@ -399,6 +409,38 @@ const beeThreads = {
   // ──────────────────────────────────────────────────────────────────────────
   // LIFECYCLE
   // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Pre-creates workers to eliminate cold-start latency.
+   * 
+   * Call this at application startup to have workers ready before
+   * the first task arrives. Workers will be created up to the
+   * specified count or poolSize (whichever is smaller).
+   * 
+   * @function warmup
+   * @memberof beeThreads
+   * @param {number} [count=minThreads] - Number of workers to pre-create
+   * @returns {Promise<void>} Resolves when workers are ready
+   * 
+   * @example
+   * // At application startup
+   * await beeThreads.warmup(4);
+   * // Now tasks execute immediately without worker creation delay
+   * 
+   * @example
+   * // Warmup based on minThreads config
+   * beeThreads.configure({ minThreads: 2 });
+   * await beeThreads.warmup(); // Creates 2 workers
+   */
+  async warmup(count) {
+    const targetCount = count ?? config.minThreads;
+    if (targetCount <= 0) return;
+    
+    await Promise.all([
+      warmupPool('normal', targetCount),
+      warmupPool('generator', targetCount)
+    ]);
+  },
 
   /**
    * Gracefully shuts down all worker pools.
@@ -505,7 +547,12 @@ const beeThreads = {
         size: normalPool.length,
         busy: poolCounters.normal.busy,
         idle: poolCounters.normal.idle,
-        queueLength: queues.normal.length,
+        queueLength: getQueueLength(queues.normal),
+        queueByPriority: {
+          high: queues.normal.high.length,
+          normal: queues.normal.normal.length,
+          low: queues.normal.low.length
+        },
         workers: normalPool.map(e => ({
           busy: e.busy,
           tasksExecuted: e.tasksExecuted,
@@ -521,7 +568,12 @@ const beeThreads = {
         size: generatorPool.length,
         busy: poolCounters.generator.busy,
         idle: poolCounters.generator.idle,
-        queueLength: queues.generator.length,
+        queueLength: getQueueLength(queues.generator),
+        queueByPriority: {
+          high: queues.generator.high.length,
+          normal: queues.generator.normal.length,
+          low: queues.generator.low.length
+        },
         workers: generatorPool.map(e => ({
           busy: e.busy,
           tasksExecuted: e.tasksExecuted,

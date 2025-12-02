@@ -47,7 +47,8 @@ async function executeOnce(fn, args, {
   poolType = 'normal', 
   transfer = [], 
   signal = null,
-  context = null 
+  context = null,
+  priority = 'normal'
 } = {}) {
   const startTime = Date.now();
   
@@ -65,7 +66,7 @@ async function executeOnce(fn, args, {
   // ─────────────────────────────────────────────────────────────────────────
   let workerInfo;
   try {
-    workerInfo = await requestWorker(poolType);
+    workerInfo = await requestWorker(poolType, priority);
   } catch (err) {
     if (safe) return { status: 'rejected', error: err };
     throw err;

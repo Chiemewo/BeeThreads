@@ -182,6 +182,7 @@ const result = await beeThreads
 | `.signal(signal)` | Cancellation support |
 | `.transfer(list)` | Zero-copy ArrayBuffers |
 | `.retry(opts)` | Auto-retry with backoff |
+| `.priority(level)` | Set task priority (`'high'`, `'normal'`, `'low'`) |
 | `.execute()` | Run the function |
 
 ### Configuration
@@ -189,6 +190,7 @@ const result = await beeThreads
 | Method | Description |
 |--------|-------------|
 | `configure(opts)` | Set pool options |
+| `warmup(count?)` | Pre-create workers |
 | `getPoolStats()` | Get metrics |
 | `shutdown()` | Terminate all workers |
 
@@ -211,10 +213,30 @@ try {
 ```js
 beeThreads.configure({
   poolSize: 8,              // Max workers
+  minThreads: 2,            // Keep 2 workers always ready
   maxQueueSize: 500,        // Max pending tasks
   workerIdleTimeout: 60000, // Cleanup idle workers (ms)
   retry: { maxAttempts: 5 } // Default retry config
 });
+
+// Pre-create workers at startup (eliminates cold-start latency)
+await beeThreads.warmup(4);
+```
+
+### Task Priority
+
+```js
+// Critical task - processed first
+await beeThreads
+  .run(criticalTask)
+  .priority('high')
+  .execute();
+
+// Background task - processed last
+beeThreads
+  .run(backgroundTask)
+  .priority('low')
+  .execute();
 ```
 
 ## Why bee-threads?
@@ -229,6 +251,8 @@ beeThreads.configure({
 - ✅ **Console forwarding** - `console.log` in workers prints to main thread
 - ✅ **TypeScript** - Full type definitions included
 - ✅ **Zero config** - Works out of the box, sensible defaults
+- ✅ **Task priority** - Process critical tasks first with `.priority('high')`
+- ✅ **Warmup** - Pre-create workers with `warmup()` to eliminate cold-start
 
 ## License
 

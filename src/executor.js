@@ -227,6 +227,36 @@ function createExecutor(state) {
     },
     
     /**
+     * Sets the task priority for queue ordering.
+     * 
+     * When all workers are busy, tasks are queued. Higher priority
+     * tasks are processed before lower priority tasks.
+     * 
+     * @param {'high'|'normal'|'low'} level - Priority level
+     * @returns {Executor} New executor with priority set
+     * 
+     * @example
+     * // Critical task - process first
+     * await beeThreads
+     *   .run(criticalTask)
+     *   .priority('high')
+     *   .execute();
+     * 
+     * // Background task - process last
+     * await beeThreads
+     *   .run(backgroundTask)
+     *   .priority('low')
+     *   .execute();
+     */
+    priority(level) {
+      return createExecutor({
+        fnString,
+        options: { ...options, priority: level },
+        args
+      });
+    },
+    
+    /**
      * Executes the function in a worker thread.
      * 
      * This is the terminal operation that triggers execution.

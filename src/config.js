@@ -70,6 +70,10 @@ const config = {
   // Minimum 2 to allow some parallelism even on single-core
   poolSize: Math.max(2, os.cpus().length - 1),
   
+  // Minimum workers to keep alive (warm pool)
+  // These workers are never terminated by idle timeout
+  minThreads: 0,
+  
   // Queue settings
   maxQueueSize: 1000,
   maxTemporaryWorkers: 10,
@@ -134,15 +138,15 @@ const poolCounters = {
 /**
  * Task queues for when all workers are busy.
  * 
- * Tasks wait here until a worker becomes available.
- * FIFO order ensures fairness.
+ * Tasks are organized by priority (high, normal, low).
+ * Within each priority, FIFO order ensures fairness.
  * 
  * @type {Object}
  * @internal
  */
 const queues = {
-  normal: [],
-  generator: []
+  normal: { high: [], normal: [], low: [] },
+  generator: { high: [], normal: [], low: [] }
 };
 
 /**

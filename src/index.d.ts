@@ -82,6 +82,7 @@ interface RetryConfig {
 
 interface PoolConfig {
   poolSize: number;
+  minThreads: number;
   maxQueueSize: number;
   maxTemporaryWorkers: number;
   workerIdleTimeout: number;
@@ -91,11 +92,23 @@ interface PoolConfig {
 
 interface ConfigureOptions {
   poolSize?: number;
+  minThreads?: number;
   maxQueueSize?: number;
   maxTemporaryWorkers?: number;
   workerIdleTimeout?: number;
   resourceLimits?: ResourceLimits;
   retry?: RetryConfig;
+}
+
+/**
+ * Task priority levels for queue ordering.
+ */
+type Priority = 'high' | 'normal' | 'low';
+
+interface QueueByPriority {
+  high: number;
+  normal: number;
+  low: number;
 }
 
 // ============================================================================
@@ -115,6 +128,7 @@ interface PoolTypeStats {
   busy: number;
   idle: number;
   queueLength: number;
+  queueByPriority: QueueByPriority;
   workers: WorkerStats[];
 }
 
@@ -220,6 +234,12 @@ interface ExecutorBase<
   retry(options?: RetryConfig): ExecutorBase<TReturn, TSafe, TClosure, TParams>;
 
   /**
+   * Sets task priority for queue ordering.
+   * Higher priority tasks are processed before lower priority tasks.
+   */
+  priority(level: Priority): ExecutorBase<TReturn, TSafe, TClosure, TParams>;
+
+  /**
    * Direct invocation with arguments.
    * Only type-safe when params are not pre-bound.
    */
@@ -254,6 +274,7 @@ interface ExecutorWithClosure<
   signal(signal: AbortSignal): ExecutorWithClosure<TReturn, TSafe, TClosure, TParams>;
   transfer(list: Transferable[]): ExecutorWithClosure<TReturn, TSafe, TClosure, TParams>;
   retry(options?: RetryConfig): ExecutorWithClosure<TReturn, TSafe, TClosure, TParams>;
+  priority(level: Priority): ExecutorWithClosure<TReturn, TSafe, TClosure, TParams>;
 
   <A extends any[]>(...args: A): TSafe extends true 
     ? Promise<ThreadResult<TReturn>> 
@@ -283,6 +304,7 @@ interface ExecutorWithParams<
   signal(signal: AbortSignal): ExecutorWithParams<TReturn, TSafe, TClosure, TParams>;
   transfer(list: Transferable[]): ExecutorWithParams<TReturn, TSafe, TClosure, TParams>;
   retry(options?: RetryConfig): ExecutorWithParams<TReturn, TSafe, TClosure, TParams>;
+  priority(level: Priority): ExecutorWithParams<TReturn, TSafe, TClosure, TParams>;
 
   /**
    * Append more arguments.
@@ -308,6 +330,7 @@ interface ExecutorComplete<
   signal(signal: AbortSignal): ExecutorComplete<TReturn, TSafe, TClosure, TParams>;
   transfer(list: Transferable[]): ExecutorComplete<TReturn, TSafe, TClosure, TParams>;
   retry(options?: RetryConfig): ExecutorComplete<TReturn, TSafe, TClosure, TParams>;
+  priority(level: Priority): ExecutorComplete<TReturn, TSafe, TClosure, TParams>;
 
   /**
    * Append additional arguments.
@@ -478,6 +501,12 @@ interface BeeThreads {
    * Configures pool settings.
    */
   configure(options: ConfigureOptions): void;
+
+  /**
+   * Pre-creates workers to eliminate cold-start latency.
+   * @param count - Number of workers to create (default: minThreads)
+   */
+  warmup(count?: number): Promise<void>;
 
   /**
    * Gracefully shuts down all workers.

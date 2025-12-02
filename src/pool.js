@@ -112,8 +112,9 @@ function createWorkerEntry(script, poolType) {
  * creates many workers, we don't want them sitting around forever.
  * This schedules cleanup after `workerIdleTimeout` ms of inactivity.
  * 
- * We always keep at least 1 worker alive to avoid cold-start
- * latency for the next task.
+ * Respects `minThreads` - never terminates workers if pool would
+ * drop below the minimum. Always keeps at least 1 worker alive
+ * to avoid cold-start latency.
  * 
  * @param {WorkerEntry} entry - Worker to schedule cleanup for
  * @internal
@@ -125,11 +126,37 @@ function scheduleIdleTimeout(entry) {
   
   entry.idleTimer = setTimeout(() => {
     const pool = pools[entry.poolType];
-    // Keep at least 1 worker warm
-    if (!entry.busy && pool.length > 1) {
+    // Keep at least minThreads workers (minimum 1)
+    const minToKeep = Math.max(1, config.minThreads);
+    if (!entry.busy && pool.length > minToKeep) {
       entry.worker.terminate();
     }
   }, config.workerIdleTimeout);
+}
+
+/**
+ * Pre-creates workers to have them ready before tasks arrive.
+ * 
+ * ## Why This Exists
+ * 
+ * Cold-start latency: Creating a worker takes time (~50-100ms).
+ * By warming up workers at startup, the first tasks execute
+ * immediately without waiting for worker creation.
+ * 
+ * @param {string} poolType - 'normal' or 'generator'
+ * @param {number} count - Number of workers to create
+ * @returns {Promise<void>} Resolves when all workers are ready
+ * @internal
+ */
+async function warmupPool(poolType, count) {
+  const pool = pools[poolType];
+  const script = SCRIPTS[poolType];
+  const toCreate = Math.min(count, config.poolSize) - pool.length;
+  
+  for (let i = 0; i < toCreate; i++) {
+    const entry = createWorkerEntry(script, poolType);
+    pool.push(entry);
+  }
 }
 
 // ============================================================================
@@ -269,11 +296,11 @@ function releaseWorker(entry, worker, temporary, executionTime = 0, failed = fal
   entry.lastUsedAt = Date.now();
   if (failed) entry.failureCount++;
   
-  // Check for queued tasks
+  // Check for queued tasks (priority order: high > normal > low)
   const queue = queues[entry.poolType];
-  if (queue.length > 0 && entry.busy) {
+  const nextTask = dequeueTask(queue);
+  if (nextTask && entry.busy) {
     // Immediately handle next task (no idle period)
-    const nextTask = queue.shift();
     clearTimeout(entry.idleTimer);
     nextTask.resolve({ entry, worker: entry.worker, temporary: false });
   } else {
@@ -300,17 +327,64 @@ function releaseWorker(entry, worker, temporary, executionTime = 0, failed = fal
  * @throws {QueueFullError} If queue is at capacity
  * @internal
  */
-function requestWorker(poolType) {
+/**
+ * Gets total queue length across all priorities.
+ * 
+ * @param {Object} queue - Priority queue object
+ * @returns {number} Total tasks in queue
+ * @internal
+ */
+function getQueueLength(queue) {
+  return queue.high.length + queue.normal.length + queue.low.length;
+}
+
+/**
+ * Dequeues the highest priority task.
+ * 
+ * Priority order: high > normal > low
+ * 
+ * @param {Object} queue - Priority queue object
+ * @returns {Object|null} Next task or null
+ * @internal
+ */
+function dequeueTask(queue) {
+  if (queue.high.length > 0) return queue.high.shift();
+  if (queue.normal.length > 0) return queue.normal.shift();
+  if (queue.low.length > 0) return queue.low.shift();
+  return null;
+}
+
+/**
+ * Requests a worker, queueing if none available.
+ * 
+ * ## Why Async?
+ * 
+ * If no workers are available, we add the task to a queue
+ * and return a Promise that resolves when a worker is free.
+ * This allows callers to `await` without knowing whether
+ * they got an immediate worker or had to wait.
+ * 
+ * @param {string} poolType - 'normal' or 'generator'
+ * @param {string} [priority='normal'] - Task priority: 'high', 'normal', 'low'
+ * @returns {Promise<Object>} Resolves with worker info
+ * @throws {QueueFullError} If queue is at capacity
+ * @internal
+ */
+function requestWorker(poolType, priority = 'normal') {
   const result = getWorker(poolType);
   if (result) return Promise.resolve(result);
 
   const queue = queues[poolType];
-  if (queue.length >= config.maxQueueSize) {
+  if (getQueueLength(queue) >= config.maxQueueSize) {
     return Promise.reject(new QueueFullError(config.maxQueueSize));
   }
 
+  // Validate priority
+  const validPriorities = ['high', 'normal', 'low'];
+  const queuePriority = validPriorities.includes(priority) ? priority : 'normal';
+
   return new Promise((resolve, reject) => {
-    queue.push({ resolve, reject, queuedAt: Date.now() });
+    queue[queuePriority].push({ resolve, reject, queuedAt: Date.now() });
   });
 }
 
@@ -319,5 +393,8 @@ module.exports = {
   scheduleIdleTimeout,
   getWorker,
   releaseWorker,
-  requestWorker
+  requestWorker,
+  warmupPool,
+  getQueueLength,
+  dequeueTask
 };

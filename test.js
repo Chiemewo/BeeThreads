@@ -1235,6 +1235,97 @@ async function runTests() {
 
   await beeThreads.shutdown();
 
+  // ---------- MINTHREADS & WARMUP ----------
+  section('minThreads & warmup()');
+
+  await beeThreads.shutdown();
+
+  await test('configure() accepts minThreads', () => {
+    beeThreads.configure({ minThreads: 2 });
+    const stats = beeThreads.getPoolStats();
+    assert.strictEqual(stats.config.minThreads, 2);
+  });
+
+  await test('configure() throws for minThreads > poolSize', () => {
+    assert.throws(
+      () => beeThreads.configure({ minThreads: 999 }),
+      TypeError
+    );
+  });
+
+  await test('configure() throws for negative minThreads', () => {
+    assert.throws(
+      () => beeThreads.configure({ minThreads: -1 }),
+      TypeError
+    );
+  });
+
+  await test('warmup() pre-creates workers', async () => {
+    await beeThreads.shutdown();
+    beeThreads.configure({ minThreads: 0 });
+    
+    const before = beeThreads.getPoolStats();
+    assert.strictEqual(before.normal.size, 0);
+    
+    await beeThreads.warmup(2);
+    
+    const after = beeThreads.getPoolStats();
+    assert.strictEqual(after.normal.size, 2);
+  });
+
+  await test('warmup() uses minThreads as default', async () => {
+    await beeThreads.shutdown();
+    beeThreads.configure({ minThreads: 3 });
+    
+    await beeThreads.warmup();
+    
+    const stats = beeThreads.getPoolStats();
+    assert.strictEqual(stats.normal.size, 3);
+  });
+
+  await beeThreads.shutdown();
+  beeThreads.configure({ minThreads: 0 });
+
+  // ---------- TASK PRIORITY ----------
+  section('Task Priority');
+
+  await test('priority() method exists on executor', () => {
+    const exec = beeThreads.run((x) => x);
+    assert.ok(typeof exec.priority === 'function', 'priority method should exist');
+  });
+
+  await test('priority() returns new executor', () => {
+    const exec1 = beeThreads.run((x) => x);
+    const exec2 = exec1.priority('high');
+    assert.notStrictEqual(exec1, exec2);
+  });
+
+  await test('high priority tasks execute', async () => {
+    const result = await beeThreads
+      .run(() => 'high priority result')
+      .priority('high')
+      .execute();
+    assert.strictEqual(result, 'high priority result');
+  });
+
+  await test('low priority tasks execute', async () => {
+    const result = await beeThreads
+      .run(() => 'low priority result')
+      .priority('low')
+      .execute();
+    assert.strictEqual(result, 'low priority result');
+  });
+
+  await test('getPoolStats() shows queue by priority', async () => {
+    const stats = beeThreads.getPoolStats();
+    assert.ok(stats.normal.queueByPriority, 'queueByPriority should exist');
+    assert.ok(typeof stats.normal.queueByPriority.high === 'number');
+    assert.ok(typeof stats.normal.queueByPriority.normal === 'number');
+    assert.ok(typeof stats.normal.queueByPriority.low === 'number');
+  });
+
+  await beeThreads.shutdown();
+
   // ---------- CLEANUP ----------
   section('Cleanup');
 
