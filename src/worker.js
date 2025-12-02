@@ -1,0 +1,155 @@
+/**
+ * @fileoverview Worker thread for executing functions.
+ * 
+ * Supports:
+ * - Regular functions
+ * - Async functions
+ * - Curried functions (auto-applies args)
+ * - Context injection for closures
+ * 
+ * @module bee-threads/worker
+ */
+
+'use strict';
+
+const { parentPort } = require('worker_threads');
+
+// ============================================================================
+// ERROR SERIALIZATION
+// ============================================================================
+
+/**
+ * Serializes error for transmission to main thread.
+ * 
+ * @param {Error|any} e - Error to serialize
+ * @returns {{ name: string, message: string, stack?: string }}
+ */
+function serializeError(e) {
+  if (e instanceof Error) {
+    return { name: e.name, message: e.message, stack: e.stack };
+  }
+  return { name: 'Error', message: String(e) };
+}
+
+// ============================================================================
+// FUNCTION VALIDATION
+// ============================================================================
+
+/**
+ * Validates source looks like a valid function.
+ * 
+ * @param {string} src - Function source
+ * @throws {TypeError} If invalid
+ */
+function validateFunctionSource(src) {
+  if (typeof src !== 'string') {
+    throw new TypeError('Function source must be a string');
+  }
+  
+  const trimmed = src.trim();
+  const validPatterns = [
+    /^function\s*\w*\s*\(/,
+    /^async\s+function\s*\w*\s*\(/,
+    /^\(.*\)\s*=>/,
+    /^\w+\s*=>/,
+    /^async\s*\(.*\)\s*=>/,
+    /^async\s+\w+\s*=>/,
+    /^\(\s*\[/,
+    /^\(\s*\{/,
+  ];
+  
+  if (!validPatterns.some(p => p.test(trimmed))) {
+    throw new TypeError('Invalid function source');
+  }
+}
+
+// ============================================================================
+// CURRIED FUNCTION SUPPORT
+// ============================================================================
+
+/**
+ * Applies arguments to a function, handling curried functions.
+ * 
+ * If the function returns another function, continues applying
+ * remaining arguments until all are consumed or result is not a function.
+ * 
+ * @param {Function} fn - Function to apply
+ * @param {Array} args - Arguments to apply
+ * @returns {*} Final result
+ * 
+ * @example
+ * applyCurried((a, b) => a + b, [1, 2]);     // → 3
+ * applyCurried(a => b => c => a+b+c, [1,2,3]); // → 6
+ * applyCurried(() => 42, []);                // → 42
+ */
+function applyCurried(fn, args) {
+  // No args - just call the function
+  if (!args || args.length === 0) {
+    return fn();
+  }
+  
+  // Try normal function call first (multi-arg)
+  // If fn expects multiple args, this works: fn(a, b, c)
+  // If fn is curried and returns function, we continue below
+  let result = fn(...args);
+  
+  // If result is still a function, we might have a curried function
+  // that needs sequential application: fn(a)(b)(c)
+  if (typeof result === 'function' && args.length > 1) {
+    // Try curried application
+    result = fn;
+    for (const arg of args) {
+      if (typeof result !== 'function') break;
+      result = result(arg);
+    }
+  }
+  
+  return result;
+}
+
+// ============================================================================
+// MESSAGE HANDLER
+// ============================================================================
+
+parentPort.on('message', ({ fn: src, args, context }) => {
+  try {
+    validateFunctionSource(src);
+    
+    let fn;
+    
+    // Compile with optional context injection
+    if (context && Object.keys(context).length > 0) {
+      const contextKeys = Object.keys(context);
+      const contextValues = Object.values(context);
+      
+      const wrapperCode = `
+        (function(${contextKeys.join(', ')}) {
+          return (${src});
+        })
+      `;
+      
+      const wrapper = eval(wrapperCode);
+      fn = wrapper(...contextValues);
+    } else {
+      fn = eval(`(${src})`);
+    }
+    
+    if (typeof fn !== 'function') {
+      throw new TypeError('Evaluated source did not produce a function');
+    }
+    
+    // Apply arguments (handles curried functions)
+    const ret = applyCurried(fn, args);
+
+    // Handle async results
+    if (ret && typeof ret.then === 'function') {
+      ret
+        .then(v => parentPort.postMessage({ ok: true, value: v }))
+        .catch(e => parentPort.postMessage({ ok: false, error: serializeError(e) }));
+    } else {
+      parentPort.postMessage({ ok: true, value: ret });
+    }
+  } catch (e) {
+    parentPort.postMessage({ ok: false, error: serializeError(e) });
+  }
+});

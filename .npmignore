@@ -1,0 +1,28 @@
+# Tests
+test.js
+test/
+*.test.js
+*.spec.js
+
+# Docs (README is included automatically)
+DOCS.md
+
+# Config files
+.gitignore
+.editorconfig
+.eslintrc*
+.prettierrc*
+tsconfig.json
+
+# IDE
+.vscode/
+.idea/
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Git
+.git/
+.github/
+
