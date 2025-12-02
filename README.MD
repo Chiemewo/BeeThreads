@@ -24,16 +24,6 @@ const result = await beeThreads
 npm install bee-threads
 ```
 
-## Features
-
-- **Inline functions** - No worker files needed
-- **Closure injection** - `.setContext()` for external variables
-- **Generators** - Stream with `stream()`
-- **Cancellation** - AbortController support
-- **Retry** - Exponential backoff
-- **Priority** - `high`, `normal`, `low` queue ordering
-- **TypeScript** - Full types included
-
 ## Examples
 
 ### External Variables
