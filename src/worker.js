@@ -15,6 +15,44 @@
 const { parentPort } = require('worker_threads');
 
 // ============================================================================
+// CONSOLE REDIRECTION
+// ============================================================================
+
+/**
+ * Redirects console.log/warn/error to main thread.
+ * 
+ * Worker threads don't share stdout with main thread by default.
+ * This intercepts console methods and sends logs via postMessage.
+ */
+const originalConsole = {
+  log: console.log.bind(console),
+  warn: console.warn.bind(console),
+  error: console.error.bind(console),
+  info: console.info.bind(console),
+  debug: console.debug.bind(console)
+};
+
+console.log = (...args) => {
+  parentPort.postMessage({ type: 'log', level: 'log', args: args.map(String) });
+};
+
+console.warn = (...args) => {
+  parentPort.postMessage({ type: 'log', level: 'warn', args: args.map(String) });
+};
+
+console.error = (...args) => {
+  parentPort.postMessage({ type: 'log', level: 'error', args: args.map(String) });
+};
+
+console.info = (...args) => {
+  parentPort.postMessage({ type: 'log', level: 'info', args: args.map(String) });
+};
+
+console.debug = (...args) => {
+  parentPort.postMessage({ type: 'log', level: 'debug', args: args.map(String) });
+};
+
+// ============================================================================
 // ERROR SERIALIZATION
 // ============================================================================
 

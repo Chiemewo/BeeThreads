@@ -74,6 +74,9 @@ function createWorkerEntry(script, poolType) {
   
   const worker = new Worker(script, workerOptions);
   
+  // Don't block process exit - workers shouldn't keep Node.js alive
+  worker.unref();
+  
   const entry = {
     worker,
     poolType,
@@ -209,6 +212,10 @@ function getWorker(poolType) {
       ? { resourceLimits: config.resourceLimits } 
       : {};
     const tempWorker = new Worker(script, workerOptions);
+    
+    // Don't block process exit
+    tempWorker.unref();
+    
     tempWorker._temporary = true;
     tempWorker._startTime = Date.now();
     metrics.temporaryWorkersCreated++;

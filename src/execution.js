@@ -115,6 +115,13 @@ async function executeOnce(fn, args, {
 
     // Worker message handler
     const onMessage = (msg) => {
+      // Handle console logs from worker
+      if (msg.type === 'log') {
+        const logFn = console[msg.level] || console.log;
+        logFn('[worker]', ...msg.args);
+        return;
+      }
+      
       if (msg.ok) {
         settle(true, msg.value);
       } else {
@@ -157,7 +164,7 @@ async function executeOnce(fn, args, {
     // ─────────────────────────────────────────────────────────────────────────
     // Attach listeners and send task
     // ─────────────────────────────────────────────────────────────────────────
-    worker.once('message', onMessage);
+    worker.on('message', onMessage);
     worker.on('error', onError);
     worker.on('exit', onExit);
 

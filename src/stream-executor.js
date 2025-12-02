@@ -107,6 +107,13 @@ function createStreamExecutor(state) {
             streamWorker.on('message', msg => {
               if (closed) return;
               
+              // Handle console logs from worker
+              if (msg.type === 'log') {
+                const logFn = console[msg.level] || console.log;
+                logFn('[worker]', ...msg.args);
+                return;
+              }
+              
               switch (msg.type) {
                 case 'yield':
                   controller.enqueue(msg.value);
