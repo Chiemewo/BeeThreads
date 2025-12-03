@@ -42,6 +42,59 @@ const vm = require('vm');
 const { createFunctionCache } = require('./cache');
 
 // ============================================================================
+// GLOBAL ERROR HANDLERS - Prevent worker crash without response
+// ============================================================================
+
+/**
+ * Catches uncaught exceptions that would otherwise crash the worker.
+ * 
+ * Without this handler, errors like:
+ * - ReferenceError (undefined variables)
+ * - TypeError (null.property access)
+ * - Stack overflow (infinite recursion)
+ * 
+ * Would cause "Worker exited with code 1" without any useful error message.
+ * This handler ensures the error details are sent back to the main thread.
+ */
+process.on('uncaughtException', (err) => {
+  try {
+    parentPort.postMessage({ 
+      ok: false, 
+      error: { 
+        name: err.name || 'UncaughtException', 
+        message: err.message || String(err),
+        stack: err.stack 
+      } 
+    });
+  } catch {
+    // If we can't even send the message, exit gracefully
+    process.exit(1);
+  }
+});
+
+/**
+ * Catches unhandled promise rejections.
+ * 
+ * Without this handler, rejected promises without .catch() would
+ * cause the worker to crash silently.
+ */
+process.on('unhandledRejection', (reason) => {
+  try {
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    parentPort.postMessage({ 
+      ok: false, 
+      error: { 
+        name: err.name || 'UnhandledRejection', 
+        message: err.message || String(reason),
+        stack: err.stack 
+      } 
+    });
+  } catch {
+    process.exit(1);
+  }
+});
+
+// ============================================================================
 // FUNCTION CACHE
 // ============================================================================
 
@@ -124,10 +177,25 @@ console.debug = (...args) => {
 /**
  * Serializes error for transmission to main thread.
  * 
+ * ## Why We Check e.name Instead of instanceof
+ * 
+ * Errors from vm.createContext() have a different Error class than
+ * the main Node.js context. This means `e instanceof Error` returns
+ * false even for real Error objects from the vm context.
+ * 
+ * By checking `e.name && e.message`, we correctly identify errors
+ * regardless of which context they came from.
+ * 
  * @param {Error|any} e - Error to serialize
  * @returns {{ name: string, message: string, stack?: string }}
  */
 function serializeError(e) {
+  // Check for error-like objects (has name and message properties)
+  // This works across different vm contexts where instanceof fails
+  if (e && typeof e === 'object' && e.name && e.message !== undefined) {
+    return { name: e.name, message: e.message, stack: e.stack };
+  }
+  // For non-error objects, try to get useful information
   if (e instanceof Error) {
     return { name: e.name, message: e.message, stack: e.stack };
   }

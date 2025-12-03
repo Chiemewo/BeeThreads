@@ -1902,6 +1902,99 @@ async function runTests() {
 
   await beeThreads.shutdown();
 
+  // ---------- UNCAUGHT ERROR HANDLING ----------
+  section('Uncaught Error Handling');
+
+  await beeThreads.shutdown();
+
+  await test('captures ReferenceError (undefined variable)', async () => {
+    try {
+      await beeThreads
+        .run(() => undefinedVariable)
+        .execute();
+      assert.fail('Should have thrown');
+    } catch (err) {
+      assert.ok(err instanceof WorkerError, 'Should be WorkerError');
+      assert.strictEqual(err.name, 'ReferenceError');
+      assert.ok(err.message.includes('undefinedVariable'), `Message should mention variable: ${err.message}`);
+    }
+  });
+
+  await test('captures TypeError (null property access)', async () => {
+    try {
+      await beeThreads
+        .run(() => null.property)
+        .execute();
+      assert.fail('Should have thrown');
+    } catch (err) {
+      assert.ok(err instanceof WorkerError, 'Should be WorkerError');
+      assert.strictEqual(err.name, 'TypeError');
+      assert.ok(err.message.includes('null'), `Message should mention null: ${err.message}`);
+    }
+  });
+
+  await test('captures TypeError (undefined property access)', async () => {
+    try {
+      await beeThreads
+        .run(() => {
+          const obj = undefined;
+          return obj.property;
+        })
+        .execute();
+      assert.fail('Should have thrown');
+    } catch (err) {
+      assert.ok(err instanceof WorkerError, 'Should be WorkerError');
+      assert.strictEqual(err.name, 'TypeError');
+    }
+  });
+
+  await test('captures unhandled async rejection', async () => {
+    try {
+      await beeThreads
+        .run(async () => {
+          throw new Error('async rejection test');
+        })
+        .execute();
+      assert.fail('Should have thrown');
+    } catch (err) {
+      assert.ok(err instanceof WorkerError, 'Should be WorkerError');
+      assert.ok(err.message.includes('async rejection test'), `Message: ${err.message}`);
+    }
+  });
+
+  await test('captures stack overflow (infinite recursion)', async () => {
+    try {
+      await beeThreads
+        .run(() => {
+          const f = () => f();
+          return f();
+        })
+        .execute();
+      assert.fail('Should have thrown');
+    } catch (err) {
+      assert.ok(err instanceof WorkerError, 'Should be WorkerError');
+      assert.strictEqual(err.name, 'RangeError');
+      assert.ok(err.message.includes('stack') || err.message.includes('recursion'), 
+        `Message should mention stack: ${err.message}`);
+    }
+  });
+
+  await test('error includes stack trace', async () => {
+    try {
+      await beeThreads
+        .run(() => {
+          throw new Error('stack trace test');
+        })
+        .execute();
+      assert.fail('Should have thrown');
+    } catch (err) {
+      assert.ok(err.stack, 'Error should have stack trace');
+      assert.ok(err.stack.length > 0, 'Stack trace should not be empty');
+    }
+  });
+
+  await beeThreads.shutdown();
+
   // ---------- CLEANUP ----------
   section('Cleanup');
 
