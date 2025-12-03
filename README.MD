@@ -246,6 +246,7 @@ const { TimeoutError, AbortError, QueueFullError, WorkerError } = require('bee-t
 5. **Complex Regex** — pattern matching on large text
 6. **PDF Generation** — multi-page documents
 7. **Batch Validation** — validate thousands of records
+8. **Heavy Loops** — millions of iterations, Monte Carlo simulations
 
 ---
 
