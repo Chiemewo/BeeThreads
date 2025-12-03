@@ -39,11 +39,12 @@ npm install bee-threads
 // no params (always requires empty call)
 await bee(() => 42)()
 
-// params together
+// with params
 await bee((a, b, c) => a + b + c)(1, 2, 3)
 
-// curry style
-await bee((a, b, c) => a + b + c)(1)(2)(3)
+// supports curried callbacks!
+await bee((a) => (b) => a + b)(1)(2)
+// → 3
 
 // with external variables
 const TAX = 0.2;
@@ -246,6 +247,7 @@ const { TimeoutError, AbortError, QueueFullError, WorkerError } = require('bee-t
 5. **Complex Regex** — pattern matching on large text
 6. **PDF Generation** — multi-page documents
 7. **Batch Validation** — validate thousands of records
+8. **Heavy Loops** — millions of iterations, Monte Carlo simulations
 
 ---
 
