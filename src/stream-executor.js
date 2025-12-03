@@ -26,10 +26,11 @@ const { WorkerError } = require('./errors');
  * @param {string} state.fnString - Serialized generator
  * @param {Object|null} state.context - Closure context
  * @param {Array} state.args - Generator arguments
+ * @param {Transferable[]} state.transfer - Zero-copy transferables
  * @returns {StreamExecutor} Chainable executor
  */
 function createStreamExecutor(state) {
-  const { fnString, context, args } = state;
+  const { fnString, context, args, transfer } = state;
   
   const executor = {
     /**
@@ -42,7 +43,8 @@ function createStreamExecutor(state) {
       return createStreamExecutor({
         fnString,
         context,
-        args: [...args, ...params]
+        args: [...args, ...params],
+        transfer
       });
     },
     
@@ -69,7 +71,36 @@ function createStreamExecutor(state) {
       return createStreamExecutor({
         fnString,
         context: ctx,
-        args
+        args,
+        transfer
+      });
+    },
+    
+    /**
+     * Specifies transferable objects for zero-copy transfer.
+     * 
+     * ArrayBuffers and other transferables are moved to the worker
+     * without copying, improving performance for large data.
+     * 
+     * **Warning**: Transferred objects become unusable in the main thread.
+     * 
+     * @param {Transferable[]} list - Objects to transfer
+     * @returns {StreamExecutor} New executor with transfer list
+     * 
+     * @example
+     * const buffer = new ArrayBuffer(1024 * 1024);
+     * beeThreads
+     *   .stream(function* (buf) { ... })
+     *   .usingParams(buffer)
+     *   .transfer([buffer])
+     *   .execute()
+     */
+    transfer(list) {
+      return createStreamExecutor({
+        fnString,
+        context,
+        args,
+        transfer: list
       });
     },
     
@@ -149,7 +180,10 @@ function createStreamExecutor(state) {
               cleanup();
             });
 
-            streamWorker.postMessage({ fn: fnString, args, context });
+            const message = { fn: fnString, args, context };
+            transfer?.length > 0 
+              ? streamWorker.postMessage(message, transfer) 
+              : streamWorker.postMessage(message);
           } catch (err) {
             controller.error(err);
             cleanup();
@@ -196,7 +230,8 @@ function stream(genFn) {
   return createStreamExecutor({
     fnString: genFn.toString(),
     context: null,
-    args: []
+    args: [],
+    transfer: []
   });
 }
 

@@ -1093,6 +1093,31 @@ async function runTests() {
     assert.strictEqual(result, 3);
   });
 
+  await test('stream transfer() passes ArrayBuffer to generator worker', async () => {
+    const buffer = new ArrayBuffer(8);
+    const view = new Uint8Array(buffer);
+    view[0] = 10;
+    view[1] = 20;
+
+    const stream = beeThreads
+      .stream(function* (buf) {
+        const arr = new Uint8Array(buf);
+        yield arr[0];
+        yield arr[1];
+      })
+      .usingParams(buffer)
+      .transfer([buffer])
+      .execute();
+
+    const chunks = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+    assert.deepStrictEqual(chunks, [10, 20]);
+    // Buffer should be detached after transfer
+    assert.strictEqual(buffer.byteLength, 0);
+  });
+
   await beeThreads.shutdown();
 
   // ---------- STREAM ERROR HANDLING ----------
