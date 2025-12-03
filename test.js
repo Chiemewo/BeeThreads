@@ -115,6 +115,84 @@ async function runTests() {
     assert.strictEqual(result, 25);
   });
 
+  await test('bee(fn) with nested object in beeClosures', async () => {
+    const config = { multiplier: 3, offset: 7 };
+    const result = await bee((x) => x * config.multiplier + config.offset)(10)({ beeClosures: { config } });
+    assert.strictEqual(result, 37);
+  });
+
+  await test('bee(fn) with array in beeClosures', async () => {
+    const values = [1, 2, 3, 4, 5];
+    const result = await bee(() => values.reduce((a, b) => a + b, 0))({ beeClosures: { values } });
+    assert.strictEqual(result, 15);
+  });
+
+  await test('bee(fn)(a)(b)(c)(d) deep curry chain', async () => {
+    const result = await bee((a, b, c, d) => a * b + c * d)(2)(3)(4)(5);
+    assert.strictEqual(result, 26);
+  });
+
+  await test('bee(fn) returns object correctly', async () => {
+    const result = await bee(() => ({ name: 'test', value: 42 }));
+    assert.deepStrictEqual(result, { name: 'test', value: 42 });
+  });
+
+  await test('bee(fn) returns array correctly', async () => {
+    const result = await bee(() => [1, 2, 3]);
+    assert.deepStrictEqual(result, [1, 2, 3]);
+  });
+
+  await test('bee(fn) handles require() inside worker', async () => {
+    const result = await bee(() => {
+      const path = require('path');
+      return path.join('a', 'b', 'c');
+    });
+    assert.ok(result.includes('a') && result.includes('b') && result.includes('c'));
+  });
+
+  await test('bee(fn) with beeClosures containing function as string', async () => {
+    const helperCode = '(x) => x * 2';
+    const result = await bee((n) => {
+      const helper = eval(helperCode);
+      return helper(n);
+    })(21)({ beeClosures: { helperCode } });
+    assert.strictEqual(result, 42);
+  });
+
+  await test('bee(fn) parallel execution', async () => {
+    const results = await Promise.all([
+      bee((x) => x * 1)(10),
+      bee((x) => x * 2)(10),
+      bee((x) => x * 3)(10),
+      bee((x) => x * 4)(10),
+    ]);
+    assert.deepStrictEqual(results, [10, 20, 30, 40]);
+  });
+
+  await test('bee(fn) error propagation', async () => {
+    try {
+      await bee(() => { throw new Error('test error'); });
+      assert.fail('Should have thrown');
+    } catch (err) {
+      assert.ok(err.message.includes('test error'));
+    }
+  });
+
+  await test('bee(fn) with undefined return', async () => {
+    const result = await bee(() => undefined);
+    assert.strictEqual(result, undefined);
+  });
+
+  await test('bee(fn) with null return', async () => {
+    const result = await bee(() => null);
+    assert.strictEqual(result, null);
+  });
+
+  await test('bee(fn) mixed curry with spread args', async () => {
+    const result = await bee((a, b, c, d) => a + b + c + d)(1, 2)(3, 4);
+    assert.strictEqual(result, 10);
+  });
+
   // ---------- BASIC RUN ----------
   section('beeThreads.run()');
 
