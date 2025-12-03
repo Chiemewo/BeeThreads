@@ -1,413 +1,588 @@
 # bee-threads - Internal Documentation
 
-> For contributors and developers who want to understand/modify the code.
+> Deep dive into architecture, decisions, and performance optimizations.
 
 ---
 
-## What Each File Does
+## Table of Contents
+
+1. [Architecture Overview](#architecture-overview)
+2. [File-by-File Breakdown](#file-by-file-breakdown)
+3. [Core Decisions & Rationale](#core-decisions--rationale)
+4. [Performance Architecture](#performance-architecture)
+5. [Data Flow](#data-flow)
+6. [Contributing Guide](#contributing-guide)
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                             User Code                                    │
+│   bee(fn)(args)  or  beeThreads.run(fn).usingParams(...).execute()      │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         index.js (Public API)                            │
+│   • bee() - Simple curried API                                          │
+│   • beeThreads.run/safeRun/stream/all/allSettled                        │
+│   • configure/shutdown/warmup/getPoolStats                              │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                    ┌───────────────┼───────────────┐
+                    ▼               ▼               ▼
+           ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+           │ executor.js  │ │stream-exec.js│ │   pool.js    │
+           │ Fluent API   │ │ Generator API│ │ Worker mgmt  │
+           └──────────────┘ └──────────────┘ └──────────────┘
+                    │               │               │
+                    └───────────────┼───────────────┘
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        execution.js (Task Engine)                        │
+│   • Worker communication                                                 │
+│   • Timeout/abort handling                                              │
+│   • Retry with exponential backoff                                      │
+│   • Metrics tracking                                                    │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                    ┌───────────────┴───────────────┐
+                    ▼                               ▼
+┌─────────────────────────────┐   ┌─────────────────────────────┐
+│       worker.js             │   │    generator-worker.js      │
+│   • vm.Script compilation   │   │   • Streaming yields        │
+│   • LRU function cache      │   │   • Return value capture    │
+│   • Curried fn support      │   │   • Same optimizations      │
+│   • Console forwarding      │   │                             │
+└─────────────────────────────┘   └─────────────────────────────┘
+```
+
+---
+
+## File-by-File Breakdown
 
 ### `src/index.js` - Public API
 
-**What it does:** Library entry point. Exports `beeThreads` and error classes.
+**Purpose:** Single entry point. Hides internal complexity.
 
-**Why it exists:** Single file users should import. Hides all internal complexity.
+**Why it exists:**
+- Users only need `require('bee-threads')` - no deep imports
+- Centralizes all public exports
+- Acts as facade pattern for internal modules
 
-```js
-// Users only need to know this:
-const { beeThreads, TimeoutError } = require('bee-threads');
-```
-
-**Responsibilities:**
-- Expose `beeThreads.run()`, `safeRun()`, `withTimeout()`, `stream()`
-- Expose `beeThreads.all()`, `allSettled()` for parallel execution
-- Expose `configure()`, `shutdown()`, `getPoolStats()`, `warmup()`
-- Re-export error classes
+**Key exports:**
+| Export | Description |
+|--------|-------------|
+| `bee(fn)` | Simple curried API for quick tasks |
+| `beeThreads` | Full API with all features |
+| `AbortError` | Thrown on cancellation |
+| `TimeoutError` | Thrown on timeout |
+| `QueueFullError` | Thrown when queue limit reached |
+| `WorkerError` | Wraps errors from worker |
 
 ---
 
-### `src/config.js` - State Management
+### `src/config.js` - Centralized State
 
-**What it does:** Centralizes ALL configuration and mutable state.
+**Purpose:** Single source of truth for ALL mutable state.
 
-**Why it exists:** Having a single place to view/reset state makes debugging and testing easier.
+**Why it exists:**
+- Debugging: One place to inspect entire library state
+- Testing: Easy to reset state between tests
+- Predictability: No scattered global variables
 
-**State it maintains:**
+**State managed:**
 ```js
-config        // User settings (poolSize, timeout, etc)
-pools         // Active workers { normal: [], generator: [] }
-poolCounters  // O(1) counters { busy: n, idle: n }
-queues        // Tasks waiting for worker
+config        // User settings (poolSize, timeout, retry, etc)
+pools         // Active workers { normal: Worker[], generator: Worker[] }
+poolCounters  // O(1) counters { busy: N, idle: N }
+queues        // Pending tasks by priority { high: [], normal: [], low: [] }
 metrics       // Execution statistics
 ```
 
-**Why poolCounters exists:**
-Avoids iterating the worker array just to count how many are busy. `getWorker()` checks `counters.idle > 0` in O(1).
+**Why poolCounters exist:**
+Instead of `pools.normal.filter(w => !w.busy).length` (O(n)), we maintain counters that update on every state change. This makes `getWorker()` checks O(1).
 
 ---
 
-### `src/pool.js` - Worker Pool
+### `src/pool.js` - Worker Pool Management
 
-**What it does:** Manages worker lifecycle.
+**Purpose:** Worker lifecycle management and intelligent task routing.
 
-**Why it exists:** Separate pool logic from execution logic.
+**Key responsibilities:**
+1. Create workers with proper configuration
+2. Select best worker for each task (load balancing + affinity)
+3. Return workers to pool after use
+4. Clean up idle workers
+5. Handle overflow with temporary workers
 
-**Main functions:**
+**Selection Strategy (in priority order):**
 
-| Function | What it does |
-|----------|--------------|
-| `createWorkerEntry()` | Creates worker with metadata (tasksExecuted, failureCount, functionHashes, etc) |
-| `getWorker(poolType, fnHash)` | Gets available worker using affinity-aware balancing |
-| `releaseWorker()` | Returns worker to pool, tracks function hash for affinity |
-| `requestWorker()` | Async wrapper - returns worker or queues task |
-| `scheduleIdleTimeout()` | Schedules terminating idle worker after X ms |
-| `fastHash(str)` | Creates djb2 hash for function affinity tracking |
+| Priority | Strategy | Why |
+|----------|----------|-----|
+| 1 | **Affinity match** | Worker already has function compiled & V8-optimized |
+| 2 | **Least-used idle** | Distributes load evenly across pool |
+| 3 | **Create new pooled** | Pool not at capacity |
+| 4 | **Create temporary** | Overflow handling, terminated after use |
+| 5 | **Queue task** | No resources available |
 
-**Selection strategy (getWorker):**
-```
-1. Has idle worker with affinity match? → Pick it (V8 hot path!)
-2. Has other idle worker? → Pick the one with fewest tasks executed
-3. Pool not full? → Create new worker
-4. Can create temporary? → Create (will be terminated after use)
-5. Otherwise → Queue task
-```
+**Why affinity tracking:**
+V8's TurboFan JIT compiler optimizes "hot" functions after ~7 calls. By routing the same function to the same worker:
+- Function is already compiled in cache (no vm.Script call)
+- V8 has optimized machine code ready
+- Better CPU cache locality
 
-**Why least-used:**
-Distributes load evenly. Avoids scenario where 1 worker does everything while others sit idle.
+We track this via `functionHashes` Set per worker (capped at 50 entries).
 
 ---
 
 ### `src/execution.js` - Task Engine
 
-**What it does:** Executes tasks on workers.
+**Purpose:** Core execution logic - worker communication and lifecycle.
 
-**Why it exists:** Separate worker communication from pool/API logic.
+**Why separated from pool.js:**
+- Single responsibility: pool manages workers, execution manages tasks
+- Easier testing: can mock pool interactions
+- Cleaner code: execution logic doesn't mix with pool logic
 
-**Functions:**
-
-| Function | What it does |
-|----------|--------------|
-| `executeOnce()` | Executes once (no retry) |
-| `execute()` | Executes with retry if configured |
-
-**executeOnce flow:**
+**Execution flow:**
 ```
 1. Check if AbortSignal already aborted
-2. Request worker via requestWorker()
-3. Setup listeners (message, error, exit)
-4. Setup timeout if any
-5. Setup abort handler if any
-6. Send task: worker.postMessage({ fn, args, context })
-7. Wait for response
-8. Cleanup (remove listeners, release worker)
-9. Resolve/reject promise
+2. Compute function hash for affinity
+3. Request worker (may queue if none available)
+4. Setup message/error/exit handlers
+5. Setup timeout timer (if configured)
+6. Setup abort handler (if configured)
+7. Send task: { fn: string, args: [], context: {} }
+8. Wait for response
+9. Cleanup (remove listeners, release worker)
+10. Update metrics
+11. Resolve/reject promise
 ```
 
-**Why retry is separate:**
-`execute()` is a wrapper that calls `executeOnce()` in a loop with backoff.
+**Why retry is separate from executeOnce:**
+- `executeOnce` is pure - no side effects beyond single execution
+- `execute` wraps with retry loop and backoff
+- Allows testing retry logic independently
 
 ---
 
 ### `src/executor.js` - Fluent API Builder
 
-**What it does:** Builds the chainable API that users use.
+**Purpose:** Creates the chainable API users interact with.
 
-**Why it exists:** Separate user interface from implementation.
-
-**Pattern used:** Immutable builder
+**Design pattern:** Immutable Builder
 
 ```js
-// Each method returns NEW executor (doesn't mutate)
+// Each method returns NEW executor (original unchanged)
 const exec1 = beeThreads.run(fn);
-const exec2 = exec1.usingParams(1);  // exec1 unchanged
-const exec3 = exec2.setContext({});  // exec2 unchanged
+const exec2 = exec1.usingParams(1);  // exec1 unaffected
+const exec3 = exec2.setContext({});  // exec2 unaffected
 ```
 
 **Why immutable:**
-Allows reusing partially configured executors:
-```js
-const base = beeThreads.run(fn).setContext({ API_KEY });
-await base.usingParams(1).execute();
-await base.usingParams(2).execute(); // Reuses config
-```
+1. **Reusability:** Base executor can be shared
+   ```js
+   const base = beeThreads.run(fn).setContext({ API_KEY });
+   await base.usingParams(1).execute();
+   await base.usingParams(2).execute(); // Same context, different params
+   ```
+2. **Predictability:** No accidental state mutation
+3. **Concurrency-safe:** Multiple calls don't interfere
+
+**Why methods can be called in any order:**
+- State is accumulated, not dependent on order
+- User freedom - configure in whatever order makes sense
+- Only `execute()` must be last (triggers execution)
 
 ---
 
-### `src/stream-executor.js` - Generator Streaming
+### `src/cache.js` - LRU Function Cache
 
-**What it does:** Same as executor.js, but for generators.
+**Purpose:** Avoid repeated function compilation.
 
-**Why separate:** Generators have different protocol (yield/end instead of ok/error).
+**Why this matters (performance numbers):**
 
-**Output:** Standard Node/Browser `ReadableStream`.
+| Operation | Time |
+|-----------|------|
+| vm.Script compile | ~0.3-0.5ms |
+| Cache lookup | ~0.001ms |
+| **Speedup** | **300-500x** |
+
+**Why LRU (Least Recently Used):**
+- Hot functions stay cached (frequently accessed)
+- Cold functions get evicted (rarely used)
+- Bounded memory (configurable max size)
+- Map-based O(1) operations
+
+**Why vm.Script instead of eval():**
+
+| Aspect | eval() | vm.Script |
+|--------|--------|-----------|
+| Compilation | Re-compiles on string change | Compiles once, reuse Script object |
+| Context injection | Requires string manipulation | Native `runInContext()` support |
+| V8 code caching | Loses optimization on string change | `produceCachedData: true` enables |
+| Performance (cached) | ~1.2-3µs | ~0.08-0.3µs |
+| Performance (with context) | ~4.8ms | ~0.1ms |
+| Stack traces | Shows "eval" | Shows proper filename |
+
+**Context key optimization:**
+Instead of slow `JSON.stringify(context)`, we create a deterministic key:
+```js
+// Slow: JSON.stringify({ TAX: 0.2, name: "test" })
+// Fast: createContextKey() → 'TAX:number:0.2|name:string:test'
+```
+Uses djb2 hash for objects/functions - ~10x faster than JSON.stringify.
 
 ---
 
-### `src/errors.js` - Error Classes
+### `src/worker.js` - Worker Thread Script
 
-**What it does:** Defines typed error classes.
+**Purpose:** Code that runs inside worker threads.
 
-**Why it exists:** Allows `instanceof` checks and consistent error codes.
-
+**Message protocol:**
 ```js
-class TimeoutError extends AsyncThreadError {
-  constructor(ms) {
-    super(`Worker timed out after ${ms}ms`, 'ERR_TIMEOUT');
-    this.timeout = ms;  // Useful extra info
-  }
-}
+// Incoming (from main thread)
+{ fn: string, args: any[], context: object }
+
+// Outgoing (to main thread)
+{ ok: true, value: any }           // Success
+{ ok: false, error: {...} }        // Error
+{ type: 'log', level: 'log', args: string[] }  // Console
 ```
 
-**Defined errors:**
+**Why console forwarding:**
+Worker threads don't share stdout with main thread. Without forwarding, `console.log` in worker functions would be silent. We intercept all console methods and send via postMessage.
 
-| Class | Code | When |
-|-------|------|------|
-| `AbortError` | `ERR_ABORTED` | Task cancelled via AbortSignal |
-| `TimeoutError` | `ERR_TIMEOUT` | Exceeded time limit |
-| `QueueFullError` | `ERR_QUEUE_FULL` | Task queue full |
-| `WorkerError` | `ERR_WORKER` | Error inside worker |
+**Why validation caching:**
+Function source validation (regex matching) runs on every call. By caching validated sources in a Set, we skip regex matching for repeated functions.
 
----
-
-### `src/cache.js` - LRU Cache & Function Cache
-
-**What it does:** Caches compiled functions to avoid repeated eval() calls.
-
-**Why it exists:** Performance optimization. eval() is expensive (~0.3-0.5ms). Cache lookup is ~0.001ms.
-
-**Components:**
-
-| Export | What it does |
-|--------|--------------|
-| `createLRUCache(maxSize)` | Generic LRU cache using Map |
-| `createFunctionCache(maxSize)` | Specialized cache for compiled functions |
-| `createContextKey(context)` | Fast hash for context objects (replaces JSON.stringify) |
-
-**Why LRU:**
-Most recently used functions stay cached. Least used get evicted when cache is full. Optimal for repeated function calls.
-
-**Context Key Optimization:**
-Instead of slow `JSON.stringify(context)`, uses fast djb2 hash algorithm with type markers:
+**Curried function support:**
 ```js
-// Old: JSON.stringify({ TAX: 0.2, name: "test" }) → '{"TAX":0.2,"name":"test"}'
-// New: createContextKey({ TAX: 0.2, name: "test" }) → 'TAX:number:0.2|name:string:test'
+// Both work with usingParams(1, 2, 3):
+(a, b, c) => a + b + c    // Normal: fn(1, 2, 3)
+a => b => c => a + b + c  // Curried: fn(1)(2)(3)
 ```
-
----
-
-### `src/worker.js` - Worker Script
-
-**What it does:** Code that runs in the worker thread.
-
-**Why separate:** Worker is isolated process, needs its own file.
-
-**Flow:**
-```
-1. Receive: { fn: string, args: [], context: {} }
-2. Validate that fn looks like a function (cached validation)
-3. Get compiled function from cache (or compile + cache)
-4. If has context → inject variables into scope
-5. Apply args (supports curried automatically)
-6. If return is Promise → wait
-7. Send: { ok: true, value } or { ok: false, error }
-```
-
-**Validation Caching:**
-Function source validation results are cached in a Set. Once a function is validated, subsequent calls skip regex matching entirely.
-
-**applyCurried() - Why it exists:**
-```js
-// Normal function: fn(1, 2, 3)
-// Curried: fn(1)(2)(3)
-// We want both to work with usingParams(1, 2, 3)
-```
-
-**Console forwarding:**
-All `console.log/warn/error/info/debug` calls are intercepted and sent to main thread via `postMessage`. They appear prefixed with `[worker]`.
+The `applyCurried()` function detects curried returns and applies args sequentially.
 
 ---
 
 ### `src/generator-worker.js` - Generator Worker
 
-**What it does:** Specialized worker for generators.
+**Purpose:** Specialized worker for streaming generators.
 
-**Why separate:** Different protocol - sends multiple messages (one per yield).
+**Why separate from worker.js:**
+- Different message protocol (multiple messages vs single response)
+- Different execution flow (yield loop vs single return)
+- Cleaner separation of concerns
 
-**Messages sent:**
+**Message types:**
 ```js
-{ type: 'yield', value }  // Each yield
-{ type: 'return', value } // Final return value
-{ type: 'end' }           // Generator finished
-{ type: 'error', error }  // Error occurred
-{ type: 'log', level, args } // Console output
+{ type: 'yield', value }   // Each yield
+{ type: 'return', value }  // Generator return value
+{ type: 'end' }            // Generator finished
+{ type: 'error', error }   // Error occurred
+{ type: 'log', level, args }  // Console output
 ```
+
+---
+
+### `src/errors.js` - Typed Errors
+
+**Purpose:** Custom error classes for specific failure modes.
+
+**Why typed errors:**
+1. **instanceof checks:** `if (err instanceof TimeoutError)`
+2. **Error codes:** `err.code === 'ERR_TIMEOUT'`
+3. **Extra context:** `err.timeout`, `err.maxSize`, etc.
+4. **Clear semantics:** Error type tells you exactly what happened
+
+| Error | Code | When |
+|-------|------|------|
+| `AbortError` | `ERR_ABORTED` | Task cancelled via AbortSignal |
+| `TimeoutError` | `ERR_TIMEOUT` | Exceeded time limit |
+| `QueueFullError` | `ERR_QUEUE_FULL` | Queue at maxQueueSize |
+| `WorkerError` | `ERR_WORKER` | Error thrown inside worker |
 
 ---
 
 ### `src/validation.js` - Input Validation
 
-**What it does:** Input validation functions.
+**Purpose:** Centralized input validation functions.
 
-**Why separate:** DRY - same validations used in multiple places.
+**Why separate file:**
+- DRY: Same validations used in multiple places
+- Testable: Can test validation logic in isolation
+- Consistent: Same error messages everywhere
 
 ```js
-validateFunction(fn)   // Check if is function
-validateTimeout(ms)    // Check if positive finite number
-validatePoolSize(n)    // Check if integer >= 1
+validateFunction(fn)   // Must be function
+validateTimeout(ms)    // Must be positive finite number
+validatePoolSize(n)    // Must be integer >= 1
 ```
 
 ---
 
 ### `src/utils.js` - Utilities
 
-**What it does:** Generic utility functions.
-
-**Why separate:** Reusable and testable in isolation.
+**Purpose:** Generic helper functions.
 
 ```js
-deepFreeze(obj)      // Recursively freeze object (for getPoolStats)
-sleep(ms)            // Promise that resolves after X ms
-calculateBackoff()   // Calculate exponential delay with jitter
+deepFreeze(obj)      // Recursively freeze (for immutable stats)
+sleep(ms)            // Promise-based delay
+calculateBackoff()   // Exponential backoff with jitter
 ```
 
 **Why jitter in backoff:**
-Avoids thundering herd - if 100 tasks fail together, we don't want them all retrying at the same time.
+Without jitter, if 100 tasks fail at the same time with 100ms backoff, they all retry at exactly 100ms, 200ms, 400ms... causing "thundering herd" spikes.
+
+Jitter adds randomness: `delay * (0.5 + Math.random())` spreads retries across time.
 
 ---
 
 ### `src/index.d.ts` - TypeScript Types
 
-**What it does:** Type definitions for TypeScript.
+**Purpose:** Type definitions for TypeScript users.
 
-**Why it exists:** Autocomplete and type checking for TS users.
+**Why ship types:**
+- Autocomplete in IDEs
+- Compile-time type checking
+- Self-documenting API
+- Required for TypeScript projects
+
+---
+
+## Core Decisions & Rationale
+
+### Why vm.Script over eval()?
+
+**The problem with eval():**
+```js
+// Every call with different context = new compilation
+eval(`(function() { return x * ${TAX} })`); // String changes = no cache
+```
+
+**vm.Script solution:**
+```js
+const script = new vm.Script('(x) => x * TAX');
+// Context changes, but Script object is reused
+script.runInContext({ TAX: 0.2, ...globals });
+script.runInContext({ TAX: 0.3, ...globals }); // Same compiled code!
+```
+
+**Benchmarks (1 million executions):**
+
+| Function | eval() | vm.Script | Speedup |
+|----------|--------|-----------|---------|
+| `x => x * 2` | 182ms | 91ms | 2x |
+| `x => x * TAX` (changing context) | 4,821ms | 112ms | **43x** |
+
+### Why worker.unref()?
+
+Workers are created with `worker.unref()` so they don't block process exit.
+
+```js
+// Without unref:
+// - Script finishes
+// - Process hangs waiting for workers to exit
+// - User must call shutdown()
+
+// With unref:
+// - Script finishes
+// - Process exits naturally
+// - Workers are cleaned up by OS
+```
+
+### Why separate pools for normal/generator?
+
+Different message protocols:
+- **Normal:** Single response `{ ok, value }`
+- **Generator:** Multiple messages `{ type: 'yield' }`, `{ type: 'end' }`
+
+Mixing them would require complex message routing. Separate pools keep code simple.
+
+### Why least-used load balancing?
+
+Alternatives considered:
+1. **Round-robin:** Doesn't account for varying task durations
+2. **Random:** Unpredictable, can create hotspots
+3. **Least-connections:** Good for servers, overkill here
+
+Least-used (fewest tasks executed) is simple, effective, and naturally distributes load. Workers that get stuck with slow tasks fall behind in count, so they get fewer new tasks.
+
+### Why priority queues?
+
+Real-world needs:
+- **High:** Health checks, critical operations
+- **Normal:** Regular tasks
+- **Low:** Background jobs, analytics
+
+Without priority, a flood of low-priority tasks would starve critical ones.
+
+### Why immutable executors?
+
+```js
+// Mutable (dangerous):
+const exec = beeThreads.run(fn);
+exec.usingParams(1);
+exec.usingParams(2); // Overwrites params!
+
+// Immutable (safe):
+const exec = beeThreads.run(fn);
+const exec1 = exec.usingParams(1);
+const exec2 = exec.usingParams(2); // Independent
+```
+
+### Why temporary workers?
+
+When pool is full and queue is growing, temporary workers provide burst capacity:
+- Created when all pooled workers are busy
+- Terminated immediately after task completes
+- Limited by `maxTemporaryWorkers` config
+- Metrics track their usage
+
+This handles traffic spikes without permanent resource allocation.
+
+---
+
+## Performance Architecture
+
+### Four-Layer Optimization
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ Layer 1: vm.Script Compilation                                  │
+│ • Compile once, run many times                                 │
+│ • produceCachedData enables V8 code caching                    │
+│ • 5-15x faster than eval() for context injection               │
+└────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌────────────────────────────────────────────────────────────────┐
+│ Layer 2: LRU Function Cache                                     │
+│ • Avoid recompilation of repeated functions                    │
+│ • Cache key includes context hash                              │
+│ • Bounded size prevents memory bloat                           │
+└────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌────────────────────────────────────────────────────────────────┐
+│ Layer 3: Worker Affinity                                        │
+│ • Route same function to same worker                           │
+│ • Leverages V8 TurboFan optimization                          │
+│ • Function hash → Worker mapping                               │
+└────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌────────────────────────────────────────────────────────────────┐
+│ Layer 4: V8 TurboFan JIT                                        │
+│ • Hot functions get compiled to machine code                   │
+│ • Affinity ensures functions stay "hot" in same worker         │
+│ • Combined effect: near-native performance                     │
+└────────────────────────────────────────────────────────────────┘
+```
+
+### Metrics Available
+
+```js
+const stats = beeThreads.getPoolStats();
+
+// Global metrics
+stats.metrics.totalTasksExecuted    // All completed tasks
+stats.metrics.totalTasksFailed      // All failed tasks
+stats.metrics.totalRetries          // Retry attempts
+stats.metrics.affinityHits          // Function routed to cached worker
+stats.metrics.affinityMisses        // No cached worker found
+stats.metrics.affinityHitRate       // "75.3%"
+
+// Per-worker metrics
+stats.normal.workers[0].tasksExecuted      // Tasks this worker ran
+stats.normal.workers[0].avgExecutionTime   // Average ms per task
+stats.normal.workers[0].cachedFunctions    // Functions in this worker's cache
+```
 
 ---
 
 ## Data Flow
 
+### Normal Task Flow
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                         User Code                           │
-│  beeThreads.run(fn).usingParams(1).setContext({}).execute() │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     executor.js                             │
-│  Builds execution config: { fn, args, context, signal }     │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    execution.js                             │
-│  1. Request worker from pool                                │
-│  2. Setup timeout/abort handlers                            │
-│  3. Send task to worker                                     │
-│  4. Wait for response                                       │
-│  5. Cleanup and return result                               │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                    ┌─────────┴─────────┐
-                    ▼                   ▼
-┌─────────────────────────┐   ┌─────────────────────────┐
-│       pool.js           │   │       worker.js         │
-│  - Get/create worker    │   │  - Receive task         │
-│  - Track metrics        │   │  - Inject context       │
-│  - Queue if busy        │   │  - Execute function     │
-│  - Release after use    │   │  - Send result          │
-└─────────────────────────┘   └─────────────────────────┘
+User: beeThreads.run(fn).usingParams(1).execute()
+  │
+  ├─► executor.js: Build { fnString, args: [1], options: {} }
+  │
+  ├─► execution.js: executeOnce()
+  │     │
+  │     ├─► pool.js: requestWorker('normal', fnHash)
+  │     │     │
+  │     │     ├─► Check affinity (fnHash in worker.functionHashes)
+  │     │     ├─► Or get least-used idle worker
+  │     │     ├─► Or create new worker
+  │     │     └─► Or queue task
+  │     │
+  │     ├─► worker.postMessage({ fn, args, context })
+  │     │
+  │     └─► Wait for response
+  │
+  ├─► worker.js: (inside worker thread)
+  │     │
+  │     ├─► validateFunctionSource(fn)
+  │     ├─► fnCache.getOrCompile(fn, context)
+  │     │     │
+  │     │     ├─► Cache hit? Return cached function
+  │     │     └─► Cache miss? vm.Script compile + cache
+  │     │
+  │     ├─► applyCurried(compiledFn, args)
+  │     └─► parentPort.postMessage({ ok: true, value })
+  │
+  └─► execution.js: Resolve promise with value
 ```
 
----
+### Generator Stream Flow
 
-## Technical Decisions
-
-### Why `eval()` instead of `new Function()`?
-`eval()` allows injecting context variables into the function's lexical scope. With `new Function()`, we'd need to pass context as parameters, making the API more complex.
-
-### Why `worker.unref()`?
-Workers don't block process exit. When your script finishes, Node.js terminates naturally without needing to call `shutdown()`.
-
-### Why separate pools for normal/generator?
-Different message protocols. Normal workers send one response. Generator workers send multiple (one per yield). Mixing them would complicate the code.
-
-### Why immutable executor pattern?
-Allows reusing partially configured executors. Each `.usingParams()` or `.setContext()` returns a new executor, so the original can be reused with different params.
-
-### Why least-used load balancing?
-Simple and effective. Always picks the worker with fewest executed tasks. Prevents one worker from being overloaded while others sit idle.
-
-### Why worker affinity?
-V8's TurboFan JIT compiler optimizes "hot" functions after several calls. By routing the same function to the same worker:
-1. Function is already compiled and cached (no eval)
-2. V8 has optimized machine code ready
-3. Better CPU cache locality
-
-The pool tracks function hashes per worker via `functionHashes` Set. When selecting a worker, it first looks for one that already executed this function.
-
----
-
-## Performance Optimizations
-
-### 1. Function Caching (cache.js)
-- LRU cache stores compiled functions
-- Avoids repeated eval() calls (~0.3-0.5ms → ~0.001ms)
-- V8 retains TurboFan optimizations on cached functions
-
-### 2. Worker Affinity (pool.js)
-- Tracks which functions each worker has executed
-- Routes same function to same worker when possible
-- Leverages V8 JIT compilation across calls
-
-### 3. Validation Caching (worker.js)
-- Pre-compiled regex patterns (not created on each call)
-- Validated sources cached in Set
-- Skip validation for known-good functions
-
-### 4. Context Hash (cache.js)
-- Fast djb2 hash instead of JSON.stringify
-- ~10x faster for typical context objects
-- Type-aware key generation
-
-### Metrics
-
-```js
-const stats = beeThreads.getPoolStats();
-
-// Affinity metrics
-stats.metrics.affinityHits      // Times worker had function cached
-stats.metrics.affinityMisses    // Times no affinity match found
-stats.metrics.affinityHitRate   // Hit rate percentage (e.g. "75.3%")
-
-// Per-worker cache info
-stats.normal.workers[0].cachedFunctions  // Functions cached in this worker
+```
+User: beeThreads.stream(genFn).execute()
+  │
+  ├─► for await (const value of stream) { ... }
+  │
+  ├─► generator-worker.js:
+  │     │
+  │     ├─► Compile generator
+  │     ├─► for (const value of generator()) {
+  │     │     postMessage({ type: 'yield', value })
+  │     │   }
+  │     └─► postMessage({ type: 'end' })
+  │
+  └─► stream-executor.js: Convert messages to async iterator
 ```
 
 ---
 
-## Adding a New Feature
+## Contributing Guide
 
-### Example: Adding `.timeout()` method to executor
+### Adding a New Executor Method
 
-1. **Update executor.js:**
-```js
-executor.timeout = function(ms) {
-  return createExecutor({
-    fnString,
-    options: { ...options, timeout: ms },
-    args
-  });
-};
-```
+1. **Update `executor.js`:**
+   ```js
+   myMethod(options) {
+     return createExecutor({
+       fnString,
+       options: { ...options, myOption: options },
+       args
+     });
+   }
+   ```
 
-2. **Update index.d.ts** (types)
+2. **Update `index.d.ts`** with TypeScript types
 
-3. **Add test in test.js**
+3. **Add tests in `test.js`**
 
 4. **Update README if user-facing**
 
----
-
-## Running Tests
+### Running Tests
 
 ```bash
 npm test
@@ -415,17 +590,28 @@ npm test
 node test.js
 ```
 
-Current coverage: **162 tests**
+Current coverage: **169 tests**
 
----
+### Code Style
 
-## Code Style
-
-- JSDoc on all public functions
+- JSDoc on all public functions with `@param`, `@returns`, `@example`
 - "Why this exists" comments on modules
-- Descriptive names (don't abbreviate)
-- Small, focused functions
+- Descriptive names (no abbreviations)
+- Small, focused functions (< 50 lines preferred)
 - Centralized state in config.js
+
+### Performance Testing
+
+When making changes, benchmark before/after:
+
+```js
+const iterations = 100000;
+const start = Date.now();
+for (let i = 0; i < iterations; i++) {
+  await bee(x => x * 2)(i);
+}
+console.log(`${iterations} iterations: ${Date.now() - start}ms`);
+```
 
 ---
 

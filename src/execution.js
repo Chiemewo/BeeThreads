@@ -1,12 +1,38 @@
 /**
  * @fileoverview Core execution engine for bee-threads.
  * 
- * Handles task execution lifecycle:
- * - Worker communication
- * - Timeout handling
- * - Abort signal support
- * - Retry with backoff
- * - Metrics tracking
+ * ## What This File Does
+ * 
+ * This is the heart of task execution. It orchestrates:
+ * 1. Acquiring a worker from the pool (with affinity preference)
+ * 2. Sending the task to the worker
+ * 3. Handling responses, errors, and timeouts
+ * 4. Releasing the worker back to the pool
+ * 5. Tracking metrics for monitoring
+ * 
+ * ## Why Separated from pool.js
+ * 
+ * - **Single responsibility**: Pool manages workers, execution manages tasks
+ * - **Testability**: Can mock pool interactions
+ * - **Clarity**: Execution logic doesn't mix with pool lifecycle
+ * 
+ * ## Execution Flow
+ * 
+ * ```
+ * execute() → Check abort → Request worker → Send task
+ *                                              ↓
+ *                                          Worker runs
+ *                                              ↓
+ *                                          Response
+ *                                              ↓
+ *           Cleanup ← Release worker ← Update metrics
+ * ```
+ * 
+ * ## Retry Behavior
+ * 
+ * - AbortError and TimeoutError are NEVER retried (intentional failures)
+ * - Other errors trigger retry with exponential backoff + jitter
+ * - Backoff prevents thundering herd on mass failures
  * 
  * @module bee-threads/execution
  */
@@ -34,12 +60,36 @@ const { AbortError, TimeoutError, WorkerError } = require('./errors');
  */
 
 /**
- * Executes a function once in a worker (no retry).
+ * Executes a function once in a worker thread (no retry).
  * 
- * @param {Function} fn - Function to execute (will be stringified)
- * @param {Array} args - Function arguments
- * @param {ExecutionOptions} options - Execution options
- * @returns {Promise<*>} Execution result
+ * ## Execution Steps
+ * 
+ * 1. **Pre-flight checks**: Verify abort signal not already triggered
+ * 2. **Worker acquisition**: Request from pool with affinity preference
+ * 3. **Handler setup**: Message, error, exit listeners
+ * 4. **Timeout setup**: Timer that terminates worker on expiry
+ * 5. **Abort setup**: Handler that terminates worker on signal
+ * 6. **Task dispatch**: postMessage with function, args, context
+ * 7. **Response handling**: Parse ok/error response
+ * 8. **Cleanup**: Remove listeners, release worker, update metrics
+ * 
+ * ## Why fnHash for Affinity
+ * 
+ * We compute a hash of the function source and pass it to `requestWorker()`.
+ * The pool uses this to prefer workers that have already executed this
+ * function, benefiting from:
+ * - Cached compiled function (no vm.Script call)
+ * - V8 TurboFan optimized code
+ * - Better CPU cache locality
+ * 
+ * @param {Function|{toString: Function}} fn - Function to execute
+ * @param {Array} args - Arguments to pass to the function
+ * @param {ExecutionOptions} options - Execution configuration
+ * @returns {Promise<*>} Function return value (or safe wrapper if safe=true)
+ * @throws {AbortError} If aborted via signal
+ * @throws {TimeoutError} If execution exceeds timeout
+ * @throws {QueueFullError} If task queue is full
+ * @throws {WorkerError} If function throws inside worker
  */
 async function executeOnce(fn, args, { 
   safe = false, 
@@ -183,12 +233,39 @@ async function executeOnce(fn, args, {
 // ============================================================================
 
 /**
- * Executes a function with optional retry logic.
+ * Executes a function with optional retry logic and exponential backoff.
  * 
- * @param {Function} fn - Function to execute
- * @param {Array} args - Function arguments
- * @param {ExecutionOptions} options - Execution options
- * @returns {Promise<*>} Execution result
+ * ## Retry Behavior
+ * 
+ * When retry is enabled (`options.retry.enabled = true`):
+ * 
+ * 1. Execute the function via `executeOnce()`
+ * 2. On success: return result immediately
+ * 3. On failure:
+ *    - AbortError/TimeoutError: **Never retry** (intentional failures)
+ *    - Other errors: Wait with backoff, then retry
+ * 4. After `maxAttempts` failures: throw last error
+ * 
+ * ## Exponential Backoff with Jitter
+ * 
+ * Delay = min(baseDelay * (backoffFactor ^ attempt), maxDelay) * random(0.5, 1.5)
+ * 
+ * Example with defaults (baseDelay=100, backoffFactor=2, maxDelay=5000):
+ * - Attempt 1 fails: wait ~100ms (50-150ms with jitter)
+ * - Attempt 2 fails: wait ~200ms (100-300ms)
+ * - Attempt 3 fails: wait ~400ms (200-600ms)
+ * - ... capped at 5000ms
+ * 
+ * ## Why Jitter
+ * 
+ * Without jitter, if 100 tasks fail at the same time, they all retry
+ * at exactly 100ms, 200ms, 400ms... causing "thundering herd" spikes.
+ * Jitter spreads retries across time.
+ * 
+ * @param {Function|{toString: Function}} fn - Function to execute
+ * @param {Array} args - Arguments to pass to the function
+ * @param {ExecutionOptions} options - Execution configuration
+ * @returns {Promise<*>} Function return value (or safe wrapper if safe=true)
  */
 async function execute(fn, args, options = {}) {
   const { retry: retryOpts = config.retry, safe = false } = options;
