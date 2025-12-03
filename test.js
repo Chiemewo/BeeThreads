@@ -188,6 +188,16 @@ async function runTests() {
     assert.strictEqual(result, 10);
   });
 
+  await test('bee(fn) supports curried callback function', async () => {
+    const result = await bee((a) => (b) => a + b)(1)(2);
+    assert.strictEqual(result, 3);
+  });
+
+  await test('bee(fn) supports deeply curried callback', async () => {
+    const result = await bee((a) => (b) => (c) => a + b + c)(1)(2)(3);
+    assert.strictEqual(result, 6);
+  });
+
   // ---------- BASIC RUN ----------
   section('beeThreads.run()');
 
