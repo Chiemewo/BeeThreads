@@ -287,35 +287,6 @@ async function runTests() {
     assert.strictEqual(result, 6);
   });
 
-  // ---------- SAFE RUN ----------
-  section('beeThreads.safeRun()');
-
-  await test('returns fulfilled result on success', async () => {
-    const result = await beeThreads
-      .safeRun((x) => x * 2)
-      .usingParams(21)
-      .execute();
-    assert.strictEqual(result.status, 'fulfilled');
-    assert.strictEqual(result.value, 42);
-  });
-
-  await test('returns rejected result on error (never throws)', async () => {
-    const result = await beeThreads
-      .safeRun(() => { throw new Error('safe error'); })
-      .usingParams()
-      .execute();
-    assert.strictEqual(result.status, 'rejected');
-    assert.strictEqual(result.error.message, 'safe error');
-  });
-
-  await test('handles async rejection safely', async () => {
-    const result = await beeThreads
-      .safeRun(async () => { throw new Error('async safe'); })
-      .usingParams()
-      .execute();
-    assert.strictEqual(result.status, 'rejected');
-  });
-
   // ---------- TIMEOUT ----------
   section('beeThreads.withTimeout()');
 
@@ -339,32 +310,6 @@ async function runTests() {
         .execute(),
       TimeoutError
     );
-  });
-
-  // ---------- SAFE WITH TIMEOUT ----------
-  section('beeThreads.safeWithTimeout()');
-
-  await beeThreads.shutdown();
-
-  await test('returns fulfilled on success within timeout', async () => {
-    const result = await beeThreads
-      .safeWithTimeout(5000)((x) => x)
-      .usingParams(42)
-      .execute();
-    assert.strictEqual(result.status, 'fulfilled');
-    assert.strictEqual(result.value, 42);
-  });
-
-  await test('returns rejected on timeout (never throws)', async () => {
-    const result = await beeThreads
-      .safeWithTimeout(50)(() => {
-        const start = Date.now();
-        while (Date.now() - start < 200) {}
-      })
-      .usingParams()
-      .execute();
-    assert.strictEqual(result.status, 'rejected');
-    assert.ok(result.error instanceof TimeoutError);
   });
 
   await beeThreads.shutdown();
@@ -664,20 +609,6 @@ async function runTests() {
 
   await beeThreads.shutdown();
 
-  await test('safeRun returns rejected result on abort', async () => {
-    const controller = new AbortController();
-    controller.abort();
-    
-    const result = await beeThreads
-      .safeRun(() => 'should not run')
-      .usingParams()
-      .signal(controller.signal)
-      .execute();
-    
-    assert.strictEqual(result.status, 'rejected');
-    assert.ok(result.error instanceof AbortError);
-  });
-
   await test('fluent API chains correctly', async () => {
     const controller = new AbortController();
     
@@ -941,14 +872,6 @@ async function runTests() {
       .run(() => 'direct execute')
       .execute();
     assert.strictEqual(result, 'direct execute');
-  });
-
-  await test('execute() works directly for safeRun()', async () => {
-    const result = await beeThreads
-      .safeRun(() => 123)
-      .execute();
-    assert.strictEqual(result.status, 'fulfilled');
-    assert.strictEqual(result.value, 123);
   });
 
   await test('stream execute() works without usingParams()', async () => {
@@ -1231,41 +1154,6 @@ async function runTests() {
     for (let i = 0; i < 20; i++) {
       assert.strictEqual(results[i], i * 2);
     }
-  });
-
-  await test('concurrent safeRun tasks all succeed', async () => {
-    const tasks = [];
-    for (let i = 0; i < 10; i++) {
-      tasks.push(
-        beeThreads
-          .safeRun((n) => n + 1)
-          .usingParams(i)
-          .execute()
-      );
-    }
-
-    const results = await Promise.all(tasks);
-    
-    for (let i = 0; i < 10; i++) {
-      assert.strictEqual(results[i].status, 'fulfilled');
-      assert.strictEqual(results[i].value, i + 1);
-    }
-  });
-
-  await test('mixed success and failure in concurrent tasks', async () => {
-    const tasks = [
-      beeThreads.safeRun(() => 1).execute(),
-      beeThreads.safeRun(() => { throw new Error('fail'); }).execute(),
-      beeThreads.safeRun(() => 3).execute(),
-    ];
-
-    const results = await Promise.all(tasks);
-    
-    assert.strictEqual(results[0].status, 'fulfilled');
-    assert.strictEqual(results[0].value, 1);
-    assert.strictEqual(results[1].status, 'rejected');
-    assert.strictEqual(results[2].status, 'fulfilled');
-    assert.strictEqual(results[2].value, 3);
   });
 
   await beeThreads.shutdown();
@@ -1711,95 +1599,6 @@ async function runTests() {
     for (const w of workers) {
       assert.ok(typeof w.cachedFunctions === 'number', 'Worker should have cachedFunctions count');
     }
-  });
-
-  await beeThreads.shutdown();
-
-  // ---------- PARALLEL EXECUTION (Promise-like API) ----------
-  section('beeThreads.all() & allSettled()');
-
-  await test('all() executes multiple tasks in parallel', async () => {
-    const [a, b, c] = await beeThreads.all([
-      [(x) => x * 2, [21]],
-      [(a, b) => a + b, [10, 20]],
-      [() => 'hello']
-    ]);
-    
-    assert.strictEqual(a, 42);
-    assert.strictEqual(b, 30);
-    assert.strictEqual(c, 'hello');
-  });
-
-  await test('all() throws on first error (like Promise.all)', async () => {
-    await assert.rejects(
-      beeThreads.all([
-        [() => 'success'],
-        [() => { throw new Error('all fail'); }],
-        [() => 'never runs']
-      ]),
-      { message: 'all fail' }
-    );
-  });
-
-  await test('all() with shared context', async () => {
-    const TAX = 0.2;
-    const [price1, price2] = await beeThreads.all([
-      [(price) => price * (1 + TAX), [100]],
-      [(price) => price * (1 + TAX), [200]],
-    ], { context: { TAX } });
-    
-    assert.strictEqual(price1, 120);
-    assert.strictEqual(price2, 240);
-  });
-
-  await test('all() throws TypeError for non-array', async () => {
-    await assert.rejects(
-      beeThreads.all('not an array'),
-      TypeError
-    );
-  });
-
-  await test('allSettled() returns all results (like Promise.allSettled)', async () => {
-    const results = await beeThreads.allSettled([
-      [() => 'success'],
-      [() => { throw new Error('fail'); }],
-      [() => 'also success']
-    ]);
-    
-    assert.strictEqual(results.length, 3);
-    assert.strictEqual(results[0].status, 'fulfilled');
-    assert.strictEqual(results[0].value, 'success');
-    assert.strictEqual(results[1].status, 'rejected');
-    assert.strictEqual(results[2].status, 'fulfilled');
-    assert.strictEqual(results[2].value, 'also success');
-  });
-
-  await test('allSettled() with shared context', async () => {
-    const MULT = 10;
-    const results = await beeThreads.allSettled([
-      [(x) => x * MULT, [1]],
-      [(x) => x * MULT, [2]],
-    ], { context: { MULT } });
-    
-    assert.strictEqual(results[0].value, 10);
-    assert.strictEqual(results[1].value, 20);
-  });
-
-  await test('allSettled() with shared timeout', async () => {
-    const results = await beeThreads.allSettled([
-      [() => 'fast'],
-      [() => 'also fast']
-    ], { timeout: 5000 });
-    
-    assert.strictEqual(results[0].status, 'fulfilled');
-    assert.strictEqual(results[1].status, 'fulfilled');
-  });
-
-  await test('allSettled() throws TypeError for non-array', async () => {
-    await assert.rejects(
-      beeThreads.allSettled('not an array'),
-      TypeError
-    );
   });
 
   await beeThreads.shutdown();

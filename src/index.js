@@ -211,12 +211,11 @@ function bee(fn) {
  * @type {Object}
  * 
  * @property {Function} run - Runs a function in a worker thread
- * @property {Function} safeRun - Runs a function in safe mode (never throws)
  * @property {Function} withTimeout - Creates a runner with timeout
- * @property {Function} safeWithTimeout - Creates a safe runner with timeout
  * @property {Function} stream - Streams values from a generator
  * @property {Function} configure - Configures pool settings
  * @property {Function} shutdown - Shuts down all workers
+ * @property {Function} warmup - Pre-creates workers
  * @property {Function} getPoolStats - Returns pool statistics
  * 
  * @example
@@ -289,44 +288,6 @@ const beeThreads = {
    *   .execute();
    */
   run: createCurriedRunner({ safe: false }),
-  
-  /**
-   * Creates a safe executor that never throws exceptions.
-   * 
-   * Instead of throwing, returns a result object with:
-   * - `{ status: 'fulfilled', value: T }` on success
-   * - `{ status: 'rejected', error: Error }` on failure
-   * 
-   * Useful for fire-and-forget operations or when you want to handle
-   * errors without try/catch.
-   * 
-   * @function safeRun
-   * @memberof beeThreads
-   * @param {Function} fn - The function to execute
-   * @returns {SafeExecutor} A chainable executor that never throws
-   * @throws {TypeError} If fn is not a function
-   * 
-   * @example
-   * const result = await beeThreads
-   *   .safeRun(() => JSON.parse(invalidJson))
-   *   .usingParams()
-   *   .execute();
-   * 
-   * if (result.status === 'rejected') {
-   *   console.error('Parse failed:', result.error.message);
-   * } else {
-   *   console.log('Parsed:', result.value);
-   * }
-   * 
-   * @example
-   * // Fire and forget with error logging
-   * beeThreads
-   *   .safeRun(sendAnalytics)
-   *   .usingParams(eventData)
-   *   .execute()
-   *   .then(r => r.status === 'rejected' && console.error(r.error));
-   */
-  safeRun: createCurriedRunner({ safe: true }),
 
   /**
    * Creates an executor with a timeout limit.
@@ -355,34 +316,6 @@ const beeThreads = {
   withTimeout(ms) {
     validateTimeout(ms);
     return createCurriedRunner({ safe: false, timeout: ms });
-  },
-
-  /**
-   * Creates a safe executor with timeout (never throws).
-   * 
-   * Combines the behavior of `safeRun` and `withTimeout`.
-   * Returns a result object instead of throwing on timeout.
-   * 
-   * @function safeWithTimeout
-   * @memberof beeThreads
-   * @param {number} ms - Timeout in milliseconds
-   * @returns {Function} A runner function for safe executors with timeout
-   * @throws {TypeError} If ms is not a positive finite number
-   * 
-   * @example
-   * const result = await beeThreads
-   *   .safeWithTimeout(1000)(slowOperation)
-   *   .usingParams()
-   *   .execute();
-   * 
-   * if (result.status === 'rejected' && result.error instanceof TimeoutError) {
-   *   console.log('Operation timed out, using fallback');
-   *   return fallbackValue;
-   * }
-   */
-  safeWithTimeout(ms) {
-    validateTimeout(ms);
-    return createCurriedRunner({ safe: true, timeout: ms });
   },
 
   /**
@@ -632,136 +565,6 @@ const beeThreads = {
     }));
 
     metrics.activeTemporaryWorkers = 0;
-  },
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // PARALLEL EXECUTION (Promise-like API)
-  // ──────────────────────────────────────────────────────────────────────────
-
-  /**
-   * Executes multiple tasks in parallel, rejecting on first error.
-   * 
-   * Similar to `Promise.all()` - if any task fails, the entire
-   * operation rejects immediately with that error.
-   * 
-   * @function all
-   * @memberof beeThreads
-   * @param {Array<[Function, Array?, Object?]>} tasks - Array of [fn, args?, options?]
-   * @param {Object} [options] - Shared options for all tasks
-   * @param {Object} [options.context] - Shared context for closure injection
-   * @param {number} [options.timeout] - Shared timeout for all tasks
-   * @returns {Promise<Array>} Array of resolved values
-   * @throws {Error} First error from any task
-   * 
-   * @example
-   * // Execute multiple functions in parallel
-   * const [a, b, c] = await beeThreads.all([
-   *   [(x) => x * 2, [21]],
-   *   [(a, b) => a + b, [10, 20]],
-   *   [() => 'hello']
-   * ]);
-   * // a = 42, b = 30, c = 'hello'
-   * 
-   * @example
-   * // With shared context
-   * const TAX = 0.2;
-   * const [price1, price2] = await beeThreads.all([
-   *   [(p) => p * (1 + TAX), [100]],
-   *   [(p) => p * (1 + TAX), [200]],
-   * ], { context: { TAX } });
-   * // price1 = 120, price2 = 240
-   * 
-   * @example
-   * // Throws on first error
-   * try {
-   *   await beeThreads.all([
-   *     [() => 'ok'],
-   *     [() => { throw new Error('fail'); }]
-   *   ]);
-   * } catch (err) {
-   *   console.error(err.message); // 'fail'
-   * }
-   */
-  async all(tasks, options = {}) {
-    if (!Array.isArray(tasks)) {
-      throw new TypeError('all() requires an array of tasks');
-    }
-    
-    const { context: sharedContext = null, timeout: sharedTimeout = null } = options;
-    const { execute } = require('./execution');
-    
-    const promises = tasks.map(task => {
-      const [fn, args = [], taskOptions = {}] = Array.isArray(task) ? task : [task];
-      
-      if (typeof fn !== 'function') {
-        return Promise.reject(new TypeError('Each task must be a function'));
-      }
-      
-      return execute(fn.toString(), args, {
-        ...taskOptions,
-        context: taskOptions.context || sharedContext,
-        timeout: taskOptions.timeout ?? sharedTimeout
-      });
-    });
-    
-    return Promise.all(promises);
-  },
-
-  /**
-   * Executes multiple tasks in parallel, always returning all results.
-   * 
-   * Similar to `Promise.allSettled()` - never throws, always returns
-   * an array of result objects with `status` and `value` or `error`.
-   * 
-   * @function allSettled
-   * @memberof beeThreads
-   * @param {Array<[Function, Array?, Object?]>} tasks - Array of [fn, args?, options?]
-   * @param {Object} [options] - Shared options for all tasks
-   * @param {Object} [options.context] - Shared context for closure injection
-   * @param {number} [options.timeout] - Shared timeout for all tasks
-   * @returns {Promise<Array<{status: 'fulfilled'|'rejected', value?: *, reason?: Error}>>}
-   * 
-   * @example
-   * const results = await beeThreads.allSettled([
-   *   [() => 'success'],
-   *   [() => { throw new Error('fail'); }],
-   *   [() => 42]
-   * ]);
-   * // [
-   * //   { status: 'fulfilled', value: 'success' },
-   * //   { status: 'rejected', reason: Error('fail') },
-   * //   { status: 'fulfilled', value: 42 }
-   * // ]
-   * 
-   * @example
-   * // Process results
-   * const results = await beeThreads.allSettled(tasks);
-   * const successes = results.filter(r => r.status === 'fulfilled');
-   * const failures = results.filter(r => r.status === 'rejected');
-   */
-  async allSettled(tasks, options = {}) {
-    if (!Array.isArray(tasks)) {
-      throw new TypeError('allSettled() requires an array of tasks');
-    }
-    
-    const { context: sharedContext = null, timeout: sharedTimeout = null } = options;
-    const { execute } = require('./execution');
-    
-    const promises = tasks.map(task => {
-      const [fn, args = [], taskOptions = {}] = Array.isArray(task) ? task : [task];
-      
-      if (typeof fn !== 'function') {
-        return Promise.reject(new TypeError('Each task must be a function'));
-      }
-      
-      return execute(fn.toString(), args, {
-        ...taskOptions,
-        context: taskOptions.context || sharedContext,
-        timeout: taskOptions.timeout ?? sharedTimeout
-      });
-    });
-    
-    return Promise.allSettled(promises);
   },
 
   // ──────────────────────────────────────────────────────────────────────────
