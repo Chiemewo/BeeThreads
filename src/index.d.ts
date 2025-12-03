@@ -135,22 +135,6 @@ interface BeeCurryThenable<F extends (...args: any[]) => any, AccArgs extends an
 }
 
 // ============================================================================
-// RESULT TYPES
-// ============================================================================
-
-interface FulfilledResult<T> {
-  status: 'fulfilled';
-  value: T;
-}
-
-interface RejectedResult {
-  status: 'rejected';
-  error: Error;
-}
-
-type ThreadResult<T> = FulfilledResult<T> | RejectedResult;
-
-// ============================================================================
 // CONFIGURATION TYPES
 // ============================================================================
 
@@ -269,7 +253,6 @@ type Configured<T> = T;
  */
 interface ExecutorBase<
   TReturn,
-  TSafe extends boolean,
   TClosure = Unconfigured,
   TParams extends any[] = Unconfigured extends any[] ? any[] : any[]
 > {
@@ -293,7 +276,7 @@ interface ExecutorBase<
    */
   setContext<C extends Record<string, any>>(
     context: C
-  ): ExecutorWithClosure<TReturn, TSafe, C, TParams>;
+  ): ExecutorWithClosure<TReturn, C, TParams>;
 
   /**
    * Pre-binds arguments to the function (partial application).
@@ -311,43 +294,39 @@ interface ExecutorBase<
    */
   usingParams<P extends any[]>(
     ...args: P
-  ): ExecutorWithParams<TReturn, TSafe, TClosure, P>;
+  ): ExecutorWithParams<TReturn, TClosure, P>;
 
   /**
    * Attaches an AbortSignal for cancellation.
    */
-  signal(signal: AbortSignal): ExecutorBase<TReturn, TSafe, TClosure, TParams>;
+  signal(signal: AbortSignal): ExecutorBase<TReturn, TClosure, TParams>;
 
   /**
    * Specifies transferable objects for zero-copy transfer.
    */
-  transfer(list: Transferable[]): ExecutorBase<TReturn, TSafe, TClosure, TParams>;
+  transfer(list: Transferable[]): ExecutorBase<TReturn, TClosure, TParams>;
 
   /**
    * Enables retry with exponential backoff.
    */
-  retry(options?: RetryConfig): ExecutorBase<TReturn, TSafe, TClosure, TParams>;
+  retry(options?: RetryConfig): ExecutorBase<TReturn, TClosure, TParams>;
 
   /**
    * Sets task priority for queue ordering.
    * Higher priority tasks are processed before lower priority tasks.
    */
-  priority(level: Priority): ExecutorBase<TReturn, TSafe, TClosure, TParams>;
+  priority(level: Priority): ExecutorBase<TReturn, TClosure, TParams>;
 
   /**
    * Direct invocation with arguments.
    * Only type-safe when params are not pre-bound.
    */
-  <A extends any[]>(...args: A): TSafe extends true 
-    ? Promise<ThreadResult<TReturn>> 
-    : Promise<TReturn>;
+  <A extends any[]>(...args: A): Promise<TReturn>;
 
   /**
    * Explicit execution (no additional args).
    */
-  execute(): TSafe extends true 
-    ? Promise<ThreadResult<TReturn>> 
-    : Promise<TReturn>;
+  execute(): Promise<TReturn>;
 }
 
 /**
@@ -355,7 +334,6 @@ interface ExecutorBase<
  */
 interface ExecutorWithClosure<
   TReturn,
-  TSafe extends boolean,
   TClosure extends Record<string, any>,
   TParams extends any[]
 > {
@@ -364,20 +342,16 @@ interface ExecutorWithClosure<
    */
   usingParams<P extends any[]>(
     ...args: P
-  ): ExecutorComplete<TReturn, TSafe, TClosure, P>;
+  ): ExecutorComplete<TReturn, TClosure, P>;
 
-  signal(signal: AbortSignal): ExecutorWithClosure<TReturn, TSafe, TClosure, TParams>;
-  transfer(list: Transferable[]): ExecutorWithClosure<TReturn, TSafe, TClosure, TParams>;
-  retry(options?: RetryConfig): ExecutorWithClosure<TReturn, TSafe, TClosure, TParams>;
-  priority(level: Priority): ExecutorWithClosure<TReturn, TSafe, TClosure, TParams>;
+  signal(signal: AbortSignal): ExecutorWithClosure<TReturn, TClosure, TParams>;
+  transfer(list: Transferable[]): ExecutorWithClosure<TReturn, TClosure, TParams>;
+  retry(options?: RetryConfig): ExecutorWithClosure<TReturn, TClosure, TParams>;
+  priority(level: Priority): ExecutorWithClosure<TReturn, TClosure, TParams>;
 
-  <A extends any[]>(...args: A): TSafe extends true 
-    ? Promise<ThreadResult<TReturn>> 
-    : Promise<TReturn>;
+  <A extends any[]>(...args: A): Promise<TReturn>;
 
-  execute(): TSafe extends true 
-    ? Promise<ThreadResult<TReturn>> 
-    : Promise<TReturn>;
+  execute(): Promise<TReturn>;
 }
 
 /**
@@ -385,7 +359,6 @@ interface ExecutorWithClosure<
  */
 interface ExecutorWithParams<
   TReturn,
-  TSafe extends boolean,
   TClosure,
   TParams extends any[]
 > {
@@ -394,23 +367,19 @@ interface ExecutorWithParams<
    */
   setContext<C extends Record<string, any>>(
     context: C
-  ): ExecutorComplete<TReturn, TSafe, C, TParams>;
+  ): ExecutorComplete<TReturn, C, TParams>;
 
-  signal(signal: AbortSignal): ExecutorWithParams<TReturn, TSafe, TClosure, TParams>;
-  transfer(list: Transferable[]): ExecutorWithParams<TReturn, TSafe, TClosure, TParams>;
-  retry(options?: RetryConfig): ExecutorWithParams<TReturn, TSafe, TClosure, TParams>;
-  priority(level: Priority): ExecutorWithParams<TReturn, TSafe, TClosure, TParams>;
+  signal(signal: AbortSignal): ExecutorWithParams<TReturn, TClosure, TParams>;
+  transfer(list: Transferable[]): ExecutorWithParams<TReturn, TClosure, TParams>;
+  retry(options?: RetryConfig): ExecutorWithParams<TReturn, TClosure, TParams>;
+  priority(level: Priority): ExecutorWithParams<TReturn, TClosure, TParams>;
 
   /**
    * Append more arguments.
    */
-  <A extends any[]>(...args: A): TSafe extends true 
-    ? Promise<ThreadResult<TReturn>> 
-    : Promise<TReturn>;
+  <A extends any[]>(...args: A): Promise<TReturn>;
 
-  execute(): TSafe extends true 
-    ? Promise<ThreadResult<TReturn>> 
-    : Promise<TReturn>;
+  execute(): Promise<TReturn>;
 }
 
 /**
@@ -418,28 +387,23 @@ interface ExecutorWithParams<
  */
 interface ExecutorComplete<
   TReturn,
-  TSafe extends boolean,
   TClosure extends Record<string, any>,
   TParams extends any[]
 > {
-  signal(signal: AbortSignal): ExecutorComplete<TReturn, TSafe, TClosure, TParams>;
-  transfer(list: Transferable[]): ExecutorComplete<TReturn, TSafe, TClosure, TParams>;
-  retry(options?: RetryConfig): ExecutorComplete<TReturn, TSafe, TClosure, TParams>;
-  priority(level: Priority): ExecutorComplete<TReturn, TSafe, TClosure, TParams>;
+  signal(signal: AbortSignal): ExecutorComplete<TReturn, TClosure, TParams>;
+  transfer(list: Transferable[]): ExecutorComplete<TReturn, TClosure, TParams>;
+  retry(options?: RetryConfig): ExecutorComplete<TReturn, TClosure, TParams>;
+  priority(level: Priority): ExecutorComplete<TReturn, TClosure, TParams>;
 
   /**
    * Append additional arguments.
    */
-  <A extends any[]>(...args: A): TSafe extends true 
-    ? Promise<ThreadResult<TReturn>> 
-    : Promise<TReturn>;
+  <A extends any[]>(...args: A): Promise<TReturn>;
 
   /**
    * Execute with pre-bound params.
    */
-  execute(): TSafe extends true 
-    ? Promise<ThreadResult<TReturn>> 
-    : Promise<TReturn>;
+  execute(): Promise<TReturn>;
 }
 
 // ============================================================================
@@ -521,14 +485,7 @@ interface StreamExecutorWithClosure<
  *   .execute();
  */
 interface CurriedRunner {
-  <TReturn>(fn: (...args: any[]) => TReturn): ExecutorBase<Awaited<TReturn>, false>;
-}
-
-/**
- * Creates a safe executor (never throws).
- */
-interface SafeCurriedRunner {
-  <TReturn>(fn: (...args: any[]) => TReturn): ExecutorBase<Awaited<TReturn>, true>;
+  <TReturn>(fn: (...args: any[]) => TReturn): ExecutorBase<Awaited<TReturn>>;
 }
 
 /**
@@ -586,20 +543,9 @@ interface BeeThreads {
   run: CurriedRunner;
 
   /**
-   * Runs a function in safe mode (never throws).
-   * Returns `{ status, value, error }`.
-   */
-  safeRun: SafeCurriedRunner;
-
-  /**
    * Creates a runner with timeout.
    */
   withTimeout(ms: number): CurriedRunner;
-
-  /**
-   * Creates a safe runner with timeout.
-   */
-  safeWithTimeout(ms: number): SafeCurriedRunner;
 
   /**
    * Streams values from a generator.
@@ -614,51 +560,6 @@ interface BeeThreads {
    * }
    */
   stream: StreamRunner;
-
-  /**
-   * Executes multiple tasks in parallel, rejecting on first error.
-   * Similar to Promise.all().
-   * 
-   * @example
-   * const [a, b, c] = await beeThreads.all([
-   *   [(x) => x * 2, [21]],
-   *   [(a, b) => a + b, [10, 20]],
-   *   [() => 'hello']
-   * ]);
-   * 
-   * @example
-   * // With shared context
-   * const TAX = 0.2;
-   * const [p1, p2] = await beeThreads.all([
-   *   [(p) => p * (1 + TAX), [100]],
-   *   [(p) => p * (1 + TAX), [200]],
-   * ], { context: { TAX } });
-   */
-  all<T extends any[]>(
-    tasks: Array<[(...args: any[]) => any, any[]?, Record<string, any>?]>,
-    options?: { context?: Record<string, any>; timeout?: number }
-  ): Promise<T>;
-
-  /**
-   * Executes multiple tasks in parallel, always returning all results.
-   * Similar to Promise.allSettled() - never throws.
-   * 
-   * @example
-   * const results = await beeThreads.allSettled([
-   *   [() => 'success'],
-   *   [() => { throw new Error('fail'); }],
-   *   [() => 42]
-   * ]);
-   * // [
-   * //   { status: 'fulfilled', value: 'success' },
-   * //   { status: 'rejected', reason: Error },
-   * //   { status: 'fulfilled', value: 42 }
-   * // ]
-   */
-  allSettled(
-    tasks: Array<[(...args: any[]) => any, any[]?, Record<string, any>?]>,
-    options?: { context?: Record<string, any>; timeout?: number }
-  ): Promise<PromiseSettledResult<any>[]>;
 
   /**
    * Configures pool settings.
@@ -706,9 +607,6 @@ export type {
   BeeCurry,
   BeeCurryThenable,
   BeeThreads,
-  ThreadResult,
-  FulfilledResult,
-  RejectedResult,
   PoolStats,
   PoolConfig,
   ConfigureOptions,
@@ -718,7 +616,6 @@ export type {
   ResourceLimits,
   RetryConfig,
   CurriedRunner,
-  SafeCurriedRunner,
   StreamRunner,
   ExecutorBase,
   ExecutorWithClosure,

@@ -27,7 +27,7 @@
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         index.js (Public API)                            │
 │   • bee() - Simple curried API                                          │
-│   • beeThreads.run/safeRun/stream/all/allSettled                        │
+│   • beeThreads.run/withTimeout/stream                                   │
 │   • configure/shutdown/warmup/getPoolStats                              │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │

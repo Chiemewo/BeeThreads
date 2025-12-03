@@ -149,23 +149,7 @@ await beeThreads
 
 ---
 
-## Variants
-
-### `beeThreads.safeRun(fn)` — Never throws
-
-Returns `{ status, value/error }` like `Promise.allSettled`:
-
-```js
-const result = await beeThreads
-  .safeRun(() => JSON.parse('invalid json'))
-  .execute();
-
-if (result.status === 'fulfilled') {
-  console.log(result.value);
-} else {
-  console.error(result.error); // SyntaxError
-}
-```
+## Timeout
 
 ### `beeThreads.withTimeout(ms)(fn)` — Execution with timeout
 
@@ -202,42 +186,28 @@ for await (const square of stream) {
 
 ## Parallel Execution
 
-### `beeThreads.all(tasks)` — Like Promise.all
-
-Executes multiple tasks in parallel. Throws on first error.
+Use native `Promise.all()` for parallel tasks:
 
 ```js
-const [a, b, c] = await beeThreads.all([
-  [(x) => x * 2, [21]],
-  [(a, b) => a + b, [10, 20]],
-  [() => 'hello']
+const [a, b, c] = await Promise.all([
+  bee(x => x * 2)(21),
+  bee((a, b) => a + b)(10, 20),
+  bee(() => 'hello')()
 ]);
 // a = 42, b = 30, c = 'hello'
-
-// With shared context
-const TAX = 0.2;
-const [p1, p2] = await beeThreads.all([
-  [(price) => price * (1 + TAX), [100]],
-  [(price) => price * (1 + TAX), [200]],
-], { context: { TAX } });
-// p1 = 120, p2 = 240
 ```
 
-### `beeThreads.allSettled(tasks)` — Like Promise.allSettled
-
-Never throws. Returns results array with `status` and `value`/`reason`.
+Or with `beeThreads`:
 
 ```js
-const results = await beeThreads.allSettled([
-  [() => 'success'],
-  [() => { throw new Error('fail'); }],
-  [() => 42]
+const double = beeThreads.run(x => x * 2);
+
+const [a, b, c] = await Promise.all([
+  double.usingParams(10).execute(),
+  double.usingParams(20).execute(),
+  double.usingParams(30).execute()
 ]);
-// [
-//   { status: 'fulfilled', value: 'success' },
-//   { status: 'rejected', reason: Error },
-//   { status: 'fulfilled', value: 42 }
-// ]
+// a = 20, b = 40, c = 60
 ```
 
 ---
