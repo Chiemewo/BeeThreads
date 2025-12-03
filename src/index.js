@@ -150,14 +150,17 @@ function bee(fn) {
   
   /**
    * Creates a curried executor that accumulates params.
-   * Executes when: awaited, () is called, or { beeClosures } is passed.
+   * 
+   * Execution triggers:
+   * - Empty call `()` - executes with accumulated args
+   * - Call with `{ beeClosures }` - executes with context
    * 
    * @param {Array} accumulatedArgs - Previously accumulated arguments
-   * @returns {Function} Curried thenable function
+   * @returns {Function} Curried function (NOT thenable - must call () to execute)
    * @internal
    */
   function createCurry(accumulatedArgs) {
-    function curry(...callArgs) {
+    return function curry(...callArgs) {
       // Check if any argument has beeClosures
       const closuresArg = callArgs.find(hasBeeClosures);
       
@@ -173,22 +176,22 @@ function bee(fn) {
         return execute(fnString, accumulatedArgs, {});
       }
       
-      // Accumulate args and return new curry
-      return createCurry([...accumulatedArgs, ...callArgs]);
-    }
-    
-    // Make it thenable so `await bee(fn)` and `await bee(fn)(args)` work
-    curry.then = (onFulfilled, onRejected) => {
-      return execute(fnString, accumulatedArgs, {}).then(onFulfilled, onRejected);
+      // Accumulate args and return new curry (thenable for await)
+      const nextCurry = createCurry([...accumulatedArgs, ...callArgs]);
+      
+      // Make thenable so `await bee(fn)(args)` works without extra ()
+      nextCurry.then = (onFulfilled, onRejected) => {
+        return execute(fnString, [...accumulatedArgs, ...callArgs], {}).then(onFulfilled, onRejected);
+      };
+      nextCurry.catch = (onRejected) => {
+        return execute(fnString, [...accumulatedArgs, ...callArgs], {}).catch(onRejected);
+      };
+      nextCurry.finally = (onFinally) => {
+        return execute(fnString, [...accumulatedArgs, ...callArgs], {}).finally(onFinally);
+      };
+      
+      return nextCurry;
     };
-    curry.catch = (onRejected) => {
-      return execute(fnString, accumulatedArgs, {}).catch(onRejected);
-    };
-    curry.finally = (onFinally) => {
-      return execute(fnString, accumulatedArgs, {}).finally(onFinally);
-    };
-    
-    return curry;
   }
   
   return createCurry([]);

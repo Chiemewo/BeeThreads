@@ -94,9 +94,30 @@ interface Bee {
 
 /**
  * Curried executor returned by bee(fn).
- * Can be awaited directly or called with more arguments.
+ * Must be called with () to execute when no params.
  */
-interface BeeCurry<F extends (...args: any[]) => any, AccArgs extends any[]> extends PromiseLike<Awaited<ReturnType<F>>> {
+interface BeeCurry<F extends (...args: any[]) => any, AccArgs extends any[]> {
+  /**
+   * Execute with no more arguments.
+   */
+  (): Promise<Awaited<ReturnType<F>>>;
+  
+  /**
+   * Execute with closures.
+   */
+  <C extends Record<string, unknown>>(closures: BeeClosures<C>): Promise<Awaited<ReturnType<F>>>;
+  
+  /**
+   * Add more arguments (continues currying, returns thenable).
+   */
+  <Args extends any[]>(...args: Args): BeeCurryThenable<F, [...AccArgs, ...Args]>;
+}
+
+/**
+ * Curried executor with arguments (thenable).
+ * Can be awaited or called with more arguments.
+ */
+interface BeeCurryThenable<F extends (...args: any[]) => any, AccArgs extends any[]> extends PromiseLike<Awaited<ReturnType<F>>> {
   /**
    * Execute with no more arguments.
    */
@@ -110,7 +131,7 @@ interface BeeCurry<F extends (...args: any[]) => any, AccArgs extends any[]> ext
   /**
    * Add more arguments (continues currying).
    */
-  <Args extends any[]>(...args: Args): BeeCurry<F, [...AccArgs, ...Args]>;
+  <Args extends any[]>(...args: Args): BeeCurryThenable<F, [...AccArgs, ...Args]>;
 }
 
 // ============================================================================
@@ -608,6 +629,7 @@ export type {
   Bee,
   BeeClosures,
   BeeCurry,
+  BeeCurryThenable,
   BeeThreads,
   ThreadResult,
   FulfilledResult,

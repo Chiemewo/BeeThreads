@@ -34,12 +34,7 @@ async function runTests() {
   // ---------- BEE() SIMPLE API ----------
   section('bee() - Simple Curried API');
 
-  await test('bee(fn) executes directly when awaited (no params)', async () => {
-    const result = await bee(() => 42);
-    assert.strictEqual(result, 42);
-  });
-
-  await test('bee(fn)() also works for no params', async () => {
+  await test('bee(fn)() executes with no params', async () => {
     const result = await bee(() => 42)();
     assert.strictEqual(result, 42);
   });
@@ -132,21 +127,21 @@ async function runTests() {
     assert.strictEqual(result, 26);
   });
 
-  await test('bee(fn) returns object correctly', async () => {
-    const result = await bee(() => ({ name: 'test', value: 42 }));
+  await test('bee(fn)() returns object correctly', async () => {
+    const result = await bee(() => ({ name: 'test', value: 42 }))();
     assert.deepStrictEqual(result, { name: 'test', value: 42 });
   });
 
-  await test('bee(fn) returns array correctly', async () => {
-    const result = await bee(() => [1, 2, 3]);
+  await test('bee(fn)() returns array correctly', async () => {
+    const result = await bee(() => [1, 2, 3])();
     assert.deepStrictEqual(result, [1, 2, 3]);
   });
 
-  await test('bee(fn) handles require() inside worker', async () => {
+  await test('bee(fn)() handles require() inside worker', async () => {
     const result = await bee(() => {
       const path = require('path');
       return path.join('a', 'b', 'c');
-    });
+    })();
     assert.ok(result.includes('a') && result.includes('b') && result.includes('c'));
   });
 
@@ -169,22 +164,22 @@ async function runTests() {
     assert.deepStrictEqual(results, [10, 20, 30, 40]);
   });
 
-  await test('bee(fn) error propagation', async () => {
+  await test('bee(fn)() error propagation', async () => {
     try {
-      await bee(() => { throw new Error('test error'); });
+      await bee(() => { throw new Error('test error'); })();
       assert.fail('Should have thrown');
     } catch (err) {
       assert.ok(err.message.includes('test error'));
     }
   });
 
-  await test('bee(fn) with undefined return', async () => {
-    const result = await bee(() => undefined);
+  await test('bee(fn)() with undefined return', async () => {
+    const result = await bee(() => undefined)();
     assert.strictEqual(result, undefined);
   });
 
-  await test('bee(fn) with null return', async () => {
-    const result = await bee(() => null);
+  await test('bee(fn)() with null return', async () => {
+    const result = await bee(() => null)();
     assert.strictEqual(result, null);
   });
 
