@@ -10,16 +10,13 @@
 Run CPU-intensive JavaScript in worker threads. No separate files, just inline functions.
 
 ```js
-const { beeThreads } = require('bee-threads');
+const { bee } = require('bee-threads');
 
 // Hash password without blocking the event loop
-const hash = await beeThreads
-  .run((password) => {
-    const crypto = require('crypto');
-    return crypto.pbkdf2Sync(password, 'salt', 100000, 64, 'sha512').toString('hex');
-  })
-  .usingParams('user-password')
-  .execute();
+const hash = await bee((password) => {
+  const crypto = require('crypto');
+  return crypto.pbkdf2Sync(password, 'salt', 100000, 64, 'sha512').toString('hex');
+})('user-password');
 ```
 
 ## Install
@@ -28,19 +25,113 @@ const hash = await beeThreads
 npm install bee-threads
 ```
 
-## Examples
+## Two APIs
 
-### External Variables
+bee-threads provides two ways to use it:
+
+| API | Best for | Syntax |
+|-----|----------|--------|
+| `bee` | Simple tasks, quick scripts | `await bee(fn)(args)` |
+| `beeThreads` | Advanced features, full control | `await beeThreads.run(fn).usingParams(args).execute()` |
+
+---
+
+## `bee` — Simple API
+
+Curried function. Clean and minimal.
 
 ```js
-const TAX = 0.2;
+const { bee } = require('bee-threads');
+```
 
-await beeThreads
-  .run((price) => price * (1 + TAX))
-  .usingParams(100)
-  .setContext({ TAX })
-  .execute();
+### Basic Usage
+
+```js
+// No arguments
+await bee(() => 1 + 1)()
+
+// With arguments
+await bee((a, b) => a + b)(10, 20)
+
+// With options (last argument)
+await bee((x) => x * TAX)(100, { context: { TAX: 0.2 } })
+```
+
+### Options
+
+Pass options as the **last argument**:
+
+```js
+await bee(fn)(arg1, arg2, {
+  context: { VAR: 123 },     // Inject variables
+  timeout: 5000,             // Timeout (ms)
+  signal: ctrl.signal,       // AbortSignal
+  priority: 'high',          // 'high' | 'normal' | 'low'
+  safe: true,                // Never throws
+  retry: { attempts: 3 }     // Auto-retry
+})
+```
+
+### Examples
+
+```js
+// Double a number
+const result = await bee(x => x * 2)(21)
+// → 42
+
+// External variables with context
+const TAX = 0.2;
+const price = await bee(p => p * (1 + TAX))(100, { context: { TAX } })
 // → 120
+
+// With timeout
+const data = await bee(heavyTask)(input, { timeout: 5000 })
+
+// Safe mode - never throws
+const result = await bee(() => JSON.parse('bad'))({ safe: true })
+if (result.status === 'rejected') {
+  console.error(result.error)
+}
+
+// Hash password
+const hash = await bee((pwd) => {
+  const crypto = require('crypto');
+  return crypto.pbkdf2Sync(pwd, 'salt', 100000, 64, 'sha512').toString('hex');
+})('secret123')
+```
+
+---
+
+## `beeThreads` — Full API
+
+Fluent builder pattern. Maximum control.
+
+```js
+const { beeThreads } = require('bee-threads');
+```
+
+### Basic Usage
+
+```js
+await beeThreads
+  .run((a, b) => a + b)
+  .usingParams(10, 20)
+  .execute()
+// → 30
+```
+
+### All Methods
+
+```js
+await beeThreads
+  .run(fn)                    // Function to execute
+  .usingParams(arg1, arg2)    // Arguments
+  .setContext({ VAR: 123 })   // Inject variables
+  .signal(ctrl.signal)        // Cancellation
+  .transfer([buffer])         // Zero-copy transfer
+  .retry({ attempts: 3 })     // Auto-retry
+  .priority('high')           // Queue priority
+  .execute()                  // Run!
 ```
 
 ### Safe Mode
@@ -48,26 +139,23 @@ await beeThreads
 ```js
 const result = await beeThreads
   .safeRun(() => JSON.parse('invalid'))
-  .execute();
+  .execute()
 
 if (result.status === 'rejected') {
-  console.error(result.error);
+  console.error(result.error)
 }
 ```
 
-### Timeout & Cancellation
+### Timeout
 
 ```js
-// Timeout
-await beeThreads.withTimeout(5000)(task).execute();
-
-// Cancel
-const ctrl = new AbortController();
-beeThreads.run(task).signal(ctrl.signal).execute();
-ctrl.abort();
+await beeThreads
+  .withTimeout(5000)(heavyTask)
+  .usingParams(data)
+  .execute()
 ```
 
-### Streaming
+### Streaming (Generators)
 
 ```js
 const stream = beeThreads
@@ -75,184 +163,104 @@ const stream = beeThreads
     for (let i = 0; i < n; i++) yield i * i;
   })
   .usingParams(5)
-  .execute();
+  .execute()
 
-for await (const v of stream) console.log(v);
+for await (const v of stream) {
+  console.log(v)
+}
+// → 0, 1, 4, 9, 16
 ```
 
 ### Priority
 
 ```js
-// Critical - first in queue
-beeThreads.run(task).priority('high').execute();
+// Critical tasks first
+await beeThreads.run(urgentTask).priority('high').execute()
 
-// Background - last in queue
-beeThreads.run(task).priority('low').execute();
+// Background tasks last
+await beeThreads.run(lowTask).priority('low').execute()
 ```
 
-## API
+---
 
-| Method | Description |
-|--------|-------------|
-| `run(fn)` | Execute in worker |
-| `safeRun(fn)` | Never throws |
-| `withTimeout(ms)(fn)` | Time limit |
-| `stream(fn)` | Generator streaming |
-
-### Executor Chain
-
-| Method | Description |
-|--------|-------------|
-| `.usingParams(...args)` | Arguments |
-| `.setContext(obj)` | Inject variables |
-| `.signal(signal)` | Cancellation |
-| `.transfer(list)` | Zero-copy buffers |
-| `.retry(opts)` | Auto-retry |
-| `.priority(level)` | Queue priority |
-| `.execute()` | Run |
-
-### Pool
-
-| Method | Description |
-|--------|-------------|
-| `configure(opts)` | Pool settings |
-| `warmup(n)` | Pre-create workers |
-| `shutdown()` | Terminate all |
-| `getPoolStats()` | Metrics |
-
-## Configuration
+## Pool Configuration
 
 ```js
 beeThreads.configure({
   poolSize: 8,              // Max workers
-  minThreads: 2,            // Always-ready workers
+  minThreads: 2,            // Always-ready workers  
   maxQueueSize: 500,        // Queue limit
   workerIdleTimeout: 60000  // Idle cleanup (ms)
-});
+})
 
-// Eliminate cold-start
-await beeThreads.warmup(4);
+// Pre-warm workers (eliminates cold-start)
+await beeThreads.warmup(4)
+
+// Graceful shutdown
+await beeThreads.shutdown()
+
+// Get metrics
+const stats = beeThreads.getPoolStats()
 ```
+
+---
 
 ## Errors
 
 ```js
-const { TimeoutError, AbortError, QueueFullError, WorkerError } = require('bee-threads');
+const { 
+  TimeoutError,    // Task exceeded timeout
+  AbortError,      // Task was cancelled
+  QueueFullError,  // Queue at capacity
+  WorkerError      // Worker crashed
+} = require('bee-threads');
 ```
+
+---
 
 ## Use Cases
 
-### Password Hashing
+### ✅ When to Use
 
-PBKDF2, bcrypt, scrypt are CPU-intensive and will block your server.
+| Task | Why |
+|------|-----|
+| Password hashing (PBKDF2, bcrypt) | CPU-intensive, blocks event loop |
+| Image processing (sharp, jimp) | CPU-intensive |
+| Large JSON parsing (50MB+) | Blocks event loop |
+| Data compression (gzip, brotli) | CPU-intensive |
+| Complex regex on large text | Can take seconds |
+| PDF generation | CPU + memory intensive |
+| Batch validation | Parallelize across cores |
 
-```js
-const hash = await beeThreads
-  .run((password) => {
-    const crypto = require('crypto');
-    return crypto.pbkdf2Sync(password, 'salt', 100000, 64, 'sha512').toString('hex');
-  })
-  .usingParams(password)
-  .execute();
-```
+### ❌ When NOT to Use
 
-### Image Processing
-
-Resize, compress, or apply filters without blocking.
-
-```js
-const thumbnail = await beeThreads
-  .run((buffer) => {
-    const sharp = require('sharp');
-    return sharp(buffer).resize(200, 200).jpeg({ quality: 80 }).toBuffer();
-  })
-  .usingParams(imageBuffer)
-  .execute();
-```
-
-### Large JSON Parsing
-
-Parsing 50MB+ JSON will freeze your event loop.
-
-```js
-const data = await beeThreads
-  .run((jsonString) => JSON.parse(jsonString))
-  .usingParams(hugeJsonString)
-  .execute();
-```
-
-### Data Compression
-
-gzip, brotli, zstd for large payloads.
-
-```js
-const compressed = await beeThreads
-  .run((data) => {
-    const zlib = require('zlib');
-    return zlib.brotliCompressSync(data);
-  })
-  .usingParams(largeBuffer)
-  .execute();
-```
-
-### Complex Regex
-
-Regex on large text files can take seconds.
-
-```js
-const matches = await beeThreads
-  .run((text) => {
-    const regex = /(\d{3})-(\d{3})-(\d{4})/g;
-    return [...text.matchAll(regex)].map(m => m[0]);
-  })
-  .usingParams(millionLineLog)
-  .execute();
-```
-
-### PDF/Report Generation
-
-Generate large documents without blocking.
-
-```js
-const pdf = await beeThreads
-  .run((data) => {
-    const PDFDocument = require('pdfkit');
-    const doc = new PDFDocument();
-    const chunks = [];
-    doc.on('data', c => chunks.push(c));
-    // ... generate 500 pages ...
-    doc.end();
-    return Buffer.concat(chunks);
-  })
-  .usingParams(reportData)
-  .execute();
-```
-
-### Batch Data Validation
-
-Validate thousands of records in parallel.
-
-```js
-const results = await Promise.all(
-  chunks.map(chunk =>
-    beeThreads
-      .run((records) => records.filter(r => !isValidEmail(r.email)))
-      .usingParams(chunk)
-      .execute()
-  )
-);
-```
-
-### When NOT to Use
-
-| Scenario | Why |
-|----------|-----|
-| `fetch()` / HTTP requests | Already async (I/O bound) |
-| Database queries | Already async (I/O bound) |
-| `fs.readFile` | Already async (I/O bound) |
+| Task | Why |
+|------|-----|
+| `fetch()` / HTTP | Already async (I/O) |
+| Database queries | Already async (I/O) |
+| `fs.readFile` | Already async (I/O) |
 | Fast operations (<10ms) | Overhead > benefit |
 
-**Rule of thumb:** If it blocks the event loop for >50ms, use bee-threads.
+**Rule of thumb:** If it blocks for >50ms, use bee-threads.
+
+---
+
+## Quick Comparison
+
+```js
+// bee — Simple, clean
+const hash = await bee(hashFn)(password)
+
+// beeThreads — Full control
+const hash = await beeThreads
+  .run(hashFn)
+  .usingParams(password)
+  .retry({ attempts: 3 })
+  .timeout(5000)
+  .execute()
+```
+
+Choose `bee` for quick tasks, `beeThreads` when you need advanced features.
 
 ## License
 

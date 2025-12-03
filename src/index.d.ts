@@ -51,83 +51,66 @@ type UnwrapYield<T> = T extends Promise<infer U> ? U : T;
 // ============================================================================
 
 /**
- * Options for the simple bee() API.
+ * Closures object for bee() simple API.
+ * Pass external variables to the worker.
  */
-interface BeeOptions<C extends Record<string, unknown> = Record<string, unknown>> {
+interface BeeClosures<C extends Record<string, unknown> = Record<string, unknown>> {
   /** Variables to inject into worker scope */
-  context?: C;
-  /** Timeout in milliseconds */
-  timeout?: number;
-  /** Cancellation signal */
-  signal?: AbortSignal;
-  /** Transferable objects for zero-copy transfer */
-  transfer?: Transferable[];
-  /** Retry configuration */
-  retry?: RetryConfig;
-  /** Task priority: 'high', 'normal', or 'low' */
-  priority?: 'high' | 'normal' | 'low';
-  /** If true, never throws - returns result object instead */
-  safe?: boolean;
-}
-
-/**
- * Options with safe mode enabled.
- */
-interface BeeOptionsSafe<C extends Record<string, unknown> = Record<string, unknown>> extends BeeOptions<C> {
-  safe: true;
+  beeClosures: C;
 }
 
 /**
  * Simple curried API for bee-threads.
  * 
- * @example
- * // Simple
- * const result = await bee(x => x * 2)(21)
+ * Minimal syntax - only supports params and closures.
+ * For advanced features (timeout, retry, etc), use beeThreads.
  * 
  * @example
- * // With context
+ * // No params
+ * await bee(() => 42)
+ * 
+ * @example
+ * // With params
+ * await bee(x => x * 2)(21)
+ * 
+ * @example
+ * // Curried
+ * await bee((a, b, c) => a + b + c)(1)(2)(3)
+ * 
+ * @example
+ * // With closures
  * const TAX = 0.2
- * const price = await bee(p => p * (1 + TAX))(100, { context: { TAX } })
- * 
- * @example
- * // Safe mode
- * const result = await bee(fn)(arg, { safe: true })
- * if (result.status === 'rejected') console.error(result.error)
+ * await bee(p => p * (1 + TAX))(100)({ beeClosures: { TAX } })
  */
 interface Bee {
   /**
    * Creates a curried worker executor for a function.
    * 
    * @param fn - The function to execute in a worker thread
-   * @returns A function that accepts arguments and returns a Promise
+   * @returns A thenable curried function
    */
-  <F extends (...args: any[]) => any>(fn: F): BeeExecutor<F>;
+  <F extends (...args: any[]) => any>(fn: F): BeeCurry<F, []>;
 }
 
 /**
- * The executor returned by bee(fn).
- * Call it with arguments to execute.
+ * Curried executor returned by bee(fn).
+ * Can be awaited directly or called with more arguments.
  */
-interface BeeExecutor<F extends (...args: any[]) => any> {
+interface BeeCurry<F extends (...args: any[]) => any, AccArgs extends any[]> extends PromiseLike<Awaited<ReturnType<F>>> {
   /**
-   * Execute with no arguments.
+   * Execute with no more arguments.
    */
   (): Promise<Awaited<ReturnType<F>>>;
   
   /**
-   * Execute with arguments only.
+   * Execute with closures.
    */
-  (...args: Parameters<F>): Promise<Awaited<ReturnType<F>>>;
+  <C extends Record<string, unknown>>(closures: BeeClosures<C>): Promise<Awaited<ReturnType<F>>>;
   
   /**
-   * Execute with arguments and options (safe mode).
+   * Add more arguments (continues currying).
    */
-  <C extends Record<string, unknown>>(...args: [...Parameters<F>, BeeOptionsSafe<C>]): Promise<ThreadResult<Awaited<ReturnType<F>>>>;
-  
-  /**
-   * Execute with arguments and options.
-   */
-  <C extends Record<string, unknown>>(...args: [...Parameters<F>, BeeOptions<C>]): Promise<Awaited<ReturnType<F>>>;
+  <Args extends any[]>(...args: Args): BeeCurry<F, [...AccArgs, ...Args]>;
 }
 
 // ============================================================================
@@ -623,9 +606,8 @@ export {
 
 export type {
   Bee,
-  BeeOptions,
-  BeeOptionsSafe,
-  BeeExecutor,
+  BeeClosures,
+  BeeCurry,
   BeeThreads,
   ThreadResult,
   FulfilledResult,

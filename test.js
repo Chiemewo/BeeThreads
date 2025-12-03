@@ -34,58 +34,47 @@ async function runTests() {
   // ---------- BEE() SIMPLE API ----------
   section('bee() - Simple Curried API');
 
-  await test('bee() executes with no arguments', async () => {
+  await test('bee(fn) executes directly when awaited (no params)', async () => {
+    const result = await bee(() => 42);
+    assert.strictEqual(result, 42);
+  });
+
+  await test('bee(fn)() also works for no params', async () => {
     const result = await bee(() => 42)();
     assert.strictEqual(result, 42);
   });
 
-  await test('bee() executes with single argument', async () => {
+  await test('bee(fn)(arg) executes with single argument', async () => {
     const result = await bee(x => x * 2)(21);
     assert.strictEqual(result, 42);
   });
 
-  await test('bee() executes with multiple arguments', async () => {
+  await test('bee(fn)(a, b, c) executes with multiple arguments', async () => {
     const result = await bee((a, b, c) => a + b + c)(1, 2, 3);
     assert.strictEqual(result, 6);
   });
 
-  await test('bee() with context option', async () => {
+  await test('bee(fn)(arg)({ beeClosures }) injects context', async () => {
     const TAX = 0.2;
-    const result = await bee(p => p * (1 + TAX))(100, { context: { TAX } });
+    const result = await bee(p => p * (1 + TAX))(100)({ beeClosures: { TAX } });
     assert.strictEqual(result, 120);
   });
 
-  await test('bee() with timeout option', async () => {
-    const result = await bee(() => 'fast')('ignored', { timeout: 5000 });
-    // Note: when no args needed, we still pass something to put options last
+  await test('bee(fn)({ beeClosures }) works without params', async () => {
+    const VALUE = 99;
+    const result = await bee(() => VALUE)({ beeClosures: { VALUE } });
+    assert.strictEqual(result, 99);
   });
 
-  await test('bee() with safe option returns fulfilled', async () => {
-    const result = await bee(() => 'ok')(undefined, { safe: true });
-    assert.strictEqual(result.status, 'fulfilled');
-    assert.strictEqual(result.value, 'ok');
+  await test('bee(fn)(a)(b)(c) curries multiple calls', async () => {
+    const result = await bee((a, b, c) => a + b + c)(1)(2)(3);
+    assert.strictEqual(result, 6);
   });
 
-  await test('bee() with safe option returns rejected on error', async () => {
-    const result = await bee(() => { throw new Error('fail'); })(undefined, { safe: true });
-    assert.strictEqual(result.status, 'rejected');
-    assert.ok(result.error instanceof Error);
-  });
-
-  await test('bee() with priority option', async () => {
-    const result = await bee(() => 'done')(undefined, { priority: 'high' });
-    assert.strictEqual(result, 'done');
-  });
-
-  await test('bee() with signal option (abort)', async () => {
-    const ctrl = new AbortController();
-    ctrl.abort();
-    try {
-      await bee(() => { while(true); })(undefined, { signal: ctrl.signal });
-      assert.fail('Should have thrown');
-    } catch (err) {
-      assert.ok(err instanceof AbortError);
-    }
+  await test('bee(fn)(a)(b)({ beeClosures }) curries with closures', async () => {
+    const MULT = 10;
+    const result = await bee((a, b) => (a + b) * MULT)(2)(3)({ beeClosures: { MULT } });
+    assert.strictEqual(result, 50);
   });
 
   await test('bee() throws TypeError for non-function', () => {
@@ -94,14 +83,14 @@ async function runTests() {
     assert.throws(() => bee(null), TypeError);
   });
 
-  await test('bee() handles async functions', async () => {
+  await test('bee(fn)(arg) handles async functions', async () => {
     const result = await bee(async (x) => {
       return x * 2;
     })(21);
     assert.strictEqual(result, 42);
   });
 
-  await test('bee() handles complex computation', async () => {
+  await test('bee(fn)(n) handles complex computation', async () => {
     const result = await bee((n) => {
       let sum = 0;
       for (let i = 0; i < n; i++) sum += i;
@@ -117,6 +106,13 @@ async function runTests() {
     })('password123');
     assert.strictEqual(typeof hash, 'string');
     assert.strictEqual(hash.length, 128);
+  });
+
+  await test('bee(fn)(args) with multiple beeClosures values', async () => {
+    const A = 10;
+    const B = 5;
+    const result = await bee((x) => x * A + B)(2)({ beeClosures: { A, B } });
+    assert.strictEqual(result, 25);
   });
 
   // ---------- BASIC RUN ----------

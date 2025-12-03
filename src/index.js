@@ -69,32 +69,21 @@ const {
 // ============================================================================
 
 /**
- * Reserved option keys for the bee() function.
- * Used to detect if the last argument is an options object.
- * @type {Set<string>}
- * @internal
- */
-const BEE_OPTION_KEYS = new Set([
-  'context', 'timeout', 'signal', 'transfer', 'retry', 'priority', 'safe'
-]);
-
-/**
- * Checks if an object looks like a bee() options object.
+ * Checks if an object contains beeClosures key.
  * 
  * @param {*} obj - Value to check
- * @returns {boolean} True if obj has any known option key
+ * @returns {boolean} True if obj has beeClosures key
  * @internal
  */
-function isBeeOptions(obj) {
-  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
-  return Object.keys(obj).some(k => BEE_OPTION_KEYS.has(k));
+function hasBeeClosures(obj) {
+  return obj && typeof obj === 'object' && !Array.isArray(obj) && 'beeClosures' in obj;
 }
 
 /**
  * Simple curried API for bee-threads.
  * 
- * This provides a minimal, ergonomic interface for common use cases.
- * For advanced features, use `beeThreads` instead.
+ * Minimal syntax for running functions in worker threads.
+ * For advanced features (timeout, retry, priority, signal), use `beeThreads`.
  * 
  * ## Syntax
  * 
@@ -105,24 +94,24 @@ function isBeeOptions(obj) {
  * // With arguments
  * await bee(fn)(arg1, arg2)
  * 
- * // With options (last argument is options object)
- * await bee(fn)(arg1, { context: { x }, timeout: 5000 })
+ * // With closures (external variables)
+ * await bee(fn)(arg1)({ beeClosures: { TAX: 0.2 } })
+ * 
+ * // Closures without params
+ * await bee(fn)({ beeClosures: { TAX: 0.2 } })
+ * 
+ * // Multiple curry calls
+ * await bee(fn)(arg1)(arg2)(arg3)({ beeClosures: { x, y } })
  * ```
  * 
- * ## Options
+ * ## beeClosures
  * 
- * | Key | Type | Description |
- * |-----|------|-------------|
- * | `context` | object | Variables to inject into worker scope |
- * | `timeout` | number | Timeout in milliseconds |
- * | `signal` | AbortSignal | Cancellation signal |
- * | `transfer` | array | Transferable objects |
- * | `retry` | object | Retry options: `{ attempts, delay, backoff }` |
- * | `priority` | string | 'high', 'normal', or 'low' |
- * | `safe` | boolean | If true, never throws (returns result object) |
+ * Pass external variables to the worker via `{ beeClosures: { key: value } }`.
+ * This is the ONLY option available in the simple API.
+ * For timeout, retry, priority, etc., use `beeThreads`.
  * 
  * @param {Function} fn - The function to run in a worker thread
- * @returns {Function} A function that accepts arguments and returns a Promise
+ * @returns {Function} A curried function that accumulates params
  * 
  * @example
  * // Simple - double a number
@@ -130,75 +119,79 @@ function isBeeOptions(obj) {
  * // → 42
  * 
  * @example
- * // With multiple arguments
+ * // Multiple arguments
  * const sum = await bee((a, b, c) => a + b + c)(1, 2, 3)
  * // → 6
  * 
  * @example
- * // With context (external variables)
+ * // With closures
  * const TAX = 0.2
- * const price = await bee(p => p * (1 + TAX))(100, { context: { TAX } })
+ * const price = await bee(p => p * (1 + TAX))(100)({ beeClosures: { TAX } })
  * // → 120
  * 
  * @example
- * // With timeout
- * const result = await bee(heavyTask)(data, { timeout: 5000 })
+ * // Curried with closures
+ * await bee(fn)(arg1)(arg2)({ beeClosures: { config } })
  * 
  * @example
- * // Safe mode - never throws
- * const result = await bee(() => JSON.parse('bad'))(undefined, { safe: true })
- * if (result.status === 'rejected') console.error(result.error)
- * 
- * @example
- * // Hash password (real-world example)
+ * // Hash password
  * const hash = await bee((pwd) => {
  *   const crypto = require('crypto')
  *   return crypto.pbkdf2Sync(pwd, 'salt', 100000, 64, 'sha512').toString('hex')
  * })('user-password')
  */
 function bee(fn) {
-  // Validate function upfront
   if (typeof fn !== 'function') {
     throw new TypeError(`bee() requires a function, got ${typeof fn}`);
   }
   
   const fnString = fn.toString();
+  const { execute } = require('./execution');
   
   /**
-   * Returns a function that executes the task with the given arguments.
+   * Creates a curried executor that accumulates params.
+   * Executes when: awaited, () is called, or { beeClosures } is passed.
    * 
-   * @param {...*} callArgs - Arguments to pass to the function
-   * @returns {Promise<*>} Resolves with the function result
+   * @param {Array} accumulatedArgs - Previously accumulated arguments
+   * @returns {Function} Curried thenable function
+   * @internal
    */
-  return function(...callArgs) {
-    // Detect if last argument is options
-    const lastArg = callArgs[callArgs.length - 1];
-    const hasOptions = callArgs.length > 0 && isBeeOptions(lastArg);
-    
-    let args, opts;
-    if (hasOptions) {
-      args = callArgs.slice(0, -1);
-      opts = lastArg;
-    } else {
-      args = callArgs;
-      opts = {};
+  function createCurry(accumulatedArgs) {
+    function curry(...callArgs) {
+      // Check if any argument has beeClosures
+      const closuresArg = callArgs.find(hasBeeClosures);
+      
+      if (closuresArg) {
+        // Found beeClosures - execute with context
+        const paramsFromThisCall = callArgs.filter(a => !hasBeeClosures(a));
+        const allArgs = [...accumulatedArgs, ...paramsFromThisCall];
+        return execute(fnString, allArgs, { context: closuresArg.beeClosures });
+      }
+      
+      if (callArgs.length === 0) {
+        // Empty call () - execute with accumulated args
+        return execute(fnString, accumulatedArgs, {});
+      }
+      
+      // Accumulate args and return new curry
+      return createCurry([...accumulatedArgs, ...callArgs]);
     }
     
-    // Build options for execute()
-    const executeOptions = {
-      context: opts.context,
-      timeout: opts.timeout,
-      signal: opts.signal,
-      transfer: opts.transfer,
-      retry: opts.retry,
-      priority: opts.priority,
-      safe: opts.safe || false
+    // Make it thenable so `await bee(fn)` and `await bee(fn)(args)` work
+    curry.then = (onFulfilled, onRejected) => {
+      return execute(fnString, accumulatedArgs, {}).then(onFulfilled, onRejected);
+    };
+    curry.catch = (onRejected) => {
+      return execute(fnString, accumulatedArgs, {}).catch(onRejected);
+    };
+    curry.finally = (onFinally) => {
+      return execute(fnString, accumulatedArgs, {}).finally(onFinally);
     };
     
-    // Use the executor internally
-    const { execute } = require('./execution');
-    return execute(fnString, args, executeOptions);
-  };
+    return curry;
+  }
+  
+  return createCurry([]);
 }
 
 // ============================================================================
