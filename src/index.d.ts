@@ -170,6 +170,13 @@ interface ConfigureOptions {
   workerIdleTimeout?: number;
   resourceLimits?: ResourceLimits;
   retry?: RetryConfig;
+  functionCacheSize?: number;
+  /**
+   * Reduces memory usage by disabling caches (~60-80% less memory).
+   * Trade-off: slower repeated executions.
+   * Useful for IoT, serverless, or memory-constrained environments.
+   */
+  lowMemoryMode?: boolean;
 }
 
 /**

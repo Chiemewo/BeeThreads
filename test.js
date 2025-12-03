@@ -1635,6 +1635,37 @@ async function runTests() {
 
   beeThreads.configure({ functionCacheSize: 100 }); // Reset
 
+  // ---------- LOW MEMORY MODE ----------
+  section('lowMemoryMode Configuration');
+
+  await test('configure() accepts lowMemoryMode', () => {
+    beeThreads.configure({ lowMemoryMode: true });
+    const stats = beeThreads.getPoolStats();
+    assert.strictEqual(stats.config.lowMemoryMode, true);
+  });
+
+  await test('configure() throws for non-boolean lowMemoryMode', () => {
+    assert.throws(
+      () => beeThreads.configure({ lowMemoryMode: 'yes' }),
+      TypeError
+    );
+  });
+
+  await test('lowMemoryMode still executes tasks correctly', async () => {
+    beeThreads.configure({ lowMemoryMode: true });
+    await beeThreads.shutdown(); // Force new workers
+    
+    const result = await bee(x => x * 2)(21);
+    assert.strictEqual(result, 42);
+  });
+
+  await test('lowMemoryMode works with context', async () => {
+    const result = await bee(x => x * MULT)(5, { beeClosures: { MULT: 10 } });
+    assert.strictEqual(result, 50);
+  });
+
+  beeThreads.configure({ lowMemoryMode: false }); // Reset
+
   // ---------- VM.SCRIPT OPTIMIZATION ----------
   section('vm.Script Optimization (context)');
 

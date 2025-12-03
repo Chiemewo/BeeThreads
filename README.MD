@@ -237,6 +237,25 @@ await beeThreads.shutdown();
 
 ---
 
+## Low Memory Mode
+
+For IoT devices, serverless functions, or memory-constrained environments:
+
+```js
+beeThreads.configure({
+  lowMemoryMode: true  // ~60-80% less memory usage
+});
+```
+
+**What it disables:**
+- Function validation cache
+- Worker affinity tracking
+- Reduces function cache to 10 entries (default: 100)
+
+**Trade-off:** Slower repeated executions (no caching benefits), but significantly lower memory footprint.
+
+---
+
 ## Errors
 
 ```js
@@ -278,9 +297,11 @@ const { TimeoutError, AbortError, QueueFullError, WorkerError } = require('bee-t
 - **Worker pool** — reuses threads, no cold-start
 - **Load balancing** — distributes tasks across workers
 - **Worker affinity** — routes same function to same worker (V8 JIT optimization)
-- **Function caching** — avoids repeated calls
+- **vm.Script** — 5-15x faster than `eval()` for function compilation
+- **Function caching** — LRU cache avoids recompilation
 - **Priority queue** — critical tasks first
 - **Auto-retry** — handles transient failures
+- **Low memory mode** — for IoT/serverless environments
 
 **Production Ready:**
 

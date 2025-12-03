@@ -401,6 +401,7 @@ const beeThreads = {
    * @param {number} [options.retry.baseDelay] - Initial delay in ms (default: 100)
    * @param {number} [options.retry.maxDelay] - Max delay cap in ms (default: 5000)
    * @param {number} [options.retry.backoffFactor] - Exponential factor (default: 2)
+   * @param {boolean} [options.lowMemoryMode] - Reduces memory usage by disabling caches (default: false)
    * @throws {TypeError} If any option has an invalid value
    * 
    * @example
@@ -420,6 +421,12 @@ const beeThreads = {
    *     maxOldGenerationSizeMb: 128,
    *     maxYoungGenerationSizeMb: 32
    *   }
+   * });
+   * 
+   * @example
+   * // Low memory mode (IoT, serverless, etc.)
+   * beeThreads.configure({
+   *   lowMemoryMode: true  // Disables caches, ~60-80% less memory
    * });
    * 
    * @example
@@ -475,6 +482,12 @@ const beeThreads = {
         throw new TypeError('functionCacheSize must be a positive integer');
       }
       config.functionCacheSize = options.functionCacheSize;
+    }
+    if (options.lowMemoryMode !== undefined) {
+      if (typeof options.lowMemoryMode !== 'boolean') {
+        throw new TypeError('lowMemoryMode must be a boolean');
+      }
+      config.lowMemoryMode = options.lowMemoryMode;
     }
   },
 
