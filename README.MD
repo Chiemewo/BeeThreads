@@ -36,14 +36,14 @@ npm install bee-threads
 ## `bee` — Short Syntax
 
 ```js
-// no params
-await bee(() => 42)
+// no params (always requires empty call)
+await bee(() => 42)()
 
-// with params
-await bee((x) => x * 2)(21)
+// params together
+await bee((a, b, c) => a + b + c)(1, 2, 3)
 
-// multiple params
-await bee((a, b) => a + b)(10)(20)
+// curry style
+await bee((a, b, c) => a + b + c)(1)(2)(3)
 
 // with external variables
 const TAX = 0.2;
@@ -74,11 +74,12 @@ await beeThreads.run(fn).usingParams(args).setContext({ VAR }).execute()
 
 ### Variants
 
-```js
-beeThreads.safeRun(fn)           // never throws, returns { status, value/error }
-beeThreads.withTimeout(5000)(fn) // with timeout
-beeThreads.stream(generatorFn)   // async iterator from generator
-```
+| Method | Description |
+|--------|-------------|
+| `beeThreads.run(fn)` | Normal execution |
+| `beeThreads.safeRun(fn)` | Never throws — returns `{ status, value/error }` like `Promise.allSettled` |
+| `beeThreads.withTimeout(ms)(fn)` | Execution with timeout |
+| `beeThreads.stream(generatorFn)` | Async iterator from generator |
 
 ---
 
@@ -98,6 +99,43 @@ beeThreads.getPoolStats();    // metrics
 ```js
 const { TimeoutError, AbortError, QueueFullError, WorkerError } = require('bee-threads');
 ```
+
+---
+
+## Use Cases
+
+1. **Password Hashing** — PBKDF2, bcrypt, scrypt
+2. **Image Processing** — resize, compress, filters (sharp, jimp)
+3. **Large JSON Parsing** — 50MB+ JSON files
+4. **Data Compression** — gzip, brotli, zstd
+5. **Complex Regex** — pattern matching on large text
+6. **PDF Generation** — multi-page documents
+7. **Batch Validation** — validate thousands of records
+
+---
+
+## Why bee-threads?
+
+**Developer Experience:**
+
+- **Inline functions** — no separate worker files
+- **Simple syntax** — `await bee(fn)(args)` 
+- **Closure support** — pass external variables with `beeClosures`
+- **Full TypeScript** — complete type definitions
+- **Zero config** — works out of the box
+
+**Performance:**
+
+- **Worker pool** — reuses threads, no cold-start
+- **Load balancing** — distributes tasks across workers
+- **Priority queue** — critical tasks first
+- **Auto-retry** — handles transient failures
+
+**Production Ready:**
+
+- **Non-blocking shutdown** — `worker.unref()` doesn't hold process
+- **Console forwarding** — logs from workers appear in main thread
+- **Graceful degradation** — queue overflow handling
 
 ## License
 
