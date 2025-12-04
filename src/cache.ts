@@ -333,36 +333,41 @@ function fastHash(str: string): string {
  * @returns Context key
  * @internal
  */
-function createContextKey(context: Record<string, unknown> | null | undefined): string {
-  if (!context) return '';
-
-  const keys = Object.keys(context);
-  if (keys.length === 0) return '';
-
-  // Sort keys for deterministic ordering
-  keys.sort();
-
-  const parts: string[] = [];
-  for (const key of keys) {
-    const value = context[key];
-    const type = typeof value;
-
-    // Create type-specific representation
-    if (value === null) {
-      parts.push(`${key}:null`);
-    } else if (type === 'function') {
-      // For functions, use a hash of the source
-      parts.push(`${key}:fn:${fastHash((value as Function).toString())}`);
-    } else if (type === 'object') {
-      // For objects/arrays, use a hash of JSON (only for cache key)
-      parts.push(`${key}:obj:${fastHash(JSON.stringify(value))}`);
-    } else {
-      // Primitives: include value directly (fast for small values)
-      parts.push(`${key}:${type}:${String(value)}`);
-    }
+function createContextKey(context: unknown, level: number = 0): string {
+  if (context === undefined) {
+    return '' // Undefined as empty string
+  }
+	if (context === null || ['string', 'number', 'boolean'].includes(typeof context)) {
+    return String(context) // Primitive as string
+  }
+	if (context instanceof Date) {
+    return String(context.getTime()) // Date as timestamp
+  }
+	if (typeof context == 'function') {
+    return fastHash(context.toString()) // Hash function source
+  }
+	if (level >= 10) {
+    return fastHash(JSON.stringify(context)) // Prevent too deep recursion
   }
 
-  return parts.join('|');
+  // Increase level for nested structures
+  level++; 
+
+  // Handle arrays recursively. Return string as "[item1,item2,...]"
+  if (Array.isArray(context)) {
+    return '['+ context.reduce((str, item) => `${(str && str+',') + createContextKey(item, level)}`, '') + ']'
+  }
+
+	const keys = Object.keys(context) as Array<keyof typeof context>
+	if (!keys.length) return ''
+
+  // Handle objects recursively. Sort for deterministic ordering. Return string as "{key1:val1&key2:val2&...}"
+  return '{' + 
+    keys.sort().reduce((str, key) => {
+		  const value = createContextKey(context[key], level)
+		  return !value ? str : `${(str && str+'&') + key}:${value}`
+	  }, '')
+  + '}'
 }
 
 /**
