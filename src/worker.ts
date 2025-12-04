@@ -363,8 +363,8 @@ port.on('message', (message: WorkerMessage) => {
     const ret = applyCurried(fn, args);
 
     // Handle async results
-    if (ret && ret instanceof Promise) {
-      ret
+    if (ret && typeof ret === 'object' && 'then' in ret && typeof (ret as Promise<unknown>).then === 'function') {
+      (ret as Promise<unknown>)
         .then(v => {
           port.postMessage({ type: MessageType.SUCCESS, value: v });
         })

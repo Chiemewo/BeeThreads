@@ -348,8 +348,8 @@ port.on('message', (message: WorkerMessage) => {
 
       const value = next.value;
 
-      if (value && value instanceof Promise) {
-        value
+      if (value && typeof value === 'object' && 'then' in value && typeof (value as Promise<unknown>).then === 'function') {
+        (value as Promise<unknown>)
           .then(v => {
             port.postMessage({ type: MessageType.YIELD, value: v });
             step(gen.next());
