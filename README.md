@@ -17,26 +17,28 @@
 
 ## Parallel Programming with bee-threads
 
+```bash
+npm install bee-threads
+```
+
 ```js
 const { bee } = require('bee-threads');
 
-// Run any function in a separate thread
+//Run any function in a separate thread - promise like
 const result = await bee((x) => x * 2)(21);  // 42
 
-// CPU-intensive? No problem.
+//Non Blocking I/O in any CPU-Itensive operation.
 const hash = await bee((pwd) => 
   require('crypto').pbkdf2Sync(pwd, 'salt', 100000, 64, 'sha512').toString('hex')
 )('password123');
 
-// Parallel execution
+//Run with Promise.all
 const [a, b, c] = await Promise.all([
   bee((x) => x * 2)(21),
   bee((x) => x + 1)(41),
   bee(() => 'hello')()
 ]);
 ```
-
-That's it. **One line = one thread.**
 
 ---
 
@@ -93,18 +95,17 @@ const result = await bee((x) => x * 2)(21);
 // ✅ Worker pool (auto-managed)
 // ✅ Function caching (300-500x faster)
 // ✅ Worker affinity (V8 JIT benefits)
+// ✅ Priority Queues
 // ✅ Error handling (try/catch works)
 // ✅ TypeScript support
 // ✅ Zero dependencies
+// ✅ Easy Sintax
+// ✅ Promise like sintax !!
 ```
 
 </td>
 </tr>
 </table>
-
-```bash
-npm install bee-threads
-```
 
 ---
 
