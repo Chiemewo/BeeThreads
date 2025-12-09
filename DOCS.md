@@ -29,19 +29,20 @@
 ### The Problem
 
 Native `worker_threads` require:
-- Creating separate worker files
-- Managing message passing manually
-- Handling worker lifecycle (creation, errors, termination)
-- Implementing your own pooling logic
+
+-  Creating separate worker files
+-  Managing message passing manually
+-  Handling worker lifecycle (creation, errors, termination)
+-  Implementing your own pooling logic
 
 ```js
 // Native worker_threads: ~50+ lines of boilerplate
-const { Worker } = require('worker_threads');
-const worker = new Worker('./worker.js');
-worker.postMessage({ data: 21 });
-worker.on('message', (result) => console.log(result));
-worker.on('error', handleError);
-worker.on('exit', handleExit);
+const { Worker } = require('worker_threads')
+const worker = new Worker('./worker.js')
+worker.postMessage({ data: 21 })
+worker.on('message', result => console.log(result))
+worker.on('error', handleError)
+worker.on('exit', handleExit)
 // ... error handling, lifecycle management, pooling...
 ```
 
@@ -49,22 +50,23 @@ worker.on('exit', handleExit);
 
 ```js
 // bee-threads: 1 line
-const result = await bee((x) => x * 2)(21); // 42
+const result = await bee(x => x * 2)(21) // 42
 ```
 
 ### Key Features
 
-| Feature | Description |
-|---------|-------------|
-| **Zero dependencies** | Only uses Node.js built-in modules |
-| **Inline functions** | No separate worker files needed |
-| **Worker pool** | Automatic worker reuse with load balancing |
-| **Function caching** | LRU cache with vm.Script compilation |
-| **Worker affinity** | Routes same function to same worker for V8 JIT benefits |
-| **TypeScript** | Full type definitions included |
-| **Generators** | Stream results with generator functions |
-| **Cancellation** | AbortSignal support for task cancellation |
-| **Retry** | Automatic retry with exponential backoff |
+| Feature                | Description                                             |
+| ---------------------- | ------------------------------------------------------- |
+| **Zero dependencies**  | Only uses Node.js built-in modules                      |
+| **Inline functions**   | No separate worker files needed                         |
+| **Worker pool**        | Automatic worker reuse with load balancing              |
+| **Function caching**   | LRU cache with vm.Script compilation                    |
+| **Worker affinity**    | Routes same function to same worker for V8 JIT benefits |
+| **TypeScript**         | Full type definitions included                          |
+| **Generators**         | Stream results with generator functions                 |
+| **Cancellation**       | AbortSignal support for task cancellation               |
+| **Retry**              | Automatic retry with exponential backoff                |
+| **Request Coalescing** | Deduplicates identical simultaneous calls               |
 
 ---
 
@@ -98,6 +100,7 @@ const result = await bee((x) => x * 2)(21); // 42
 │   • Worker communication                                                │
 │   • Timeout/abort handling (race-condition safe)                        │
 │   • Retry with exponential backoff                                      │
+│   • Request coalescing (via coalescing.ts)                              │
 │   • Metrics tracking                                                    │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -123,36 +126,37 @@ const result = await bee((x) => x * 2)(21); // 42
 Single entry point that hides internal complexity. Users only need `require('bee-threads')`.
 
 **What it does:**
-- Exports `bee()` - the simple curried API
-- Exports `beeThreads` - the full fluent API
-- Re-exports error classes for catch handling
-- Implements the `bee()` function with thenable support
+
+-  Exports `bee()` - the simple curried API
+-  Exports `beeThreads` - the full fluent API
+-  Re-exports error classes for catch handling
+-  Implements the `bee()` function with thenable support
 
 **Key exports:**
 
-| Export | Description |
-|--------|-------------|
-| `bee(fn)` | Simple curried API for quick tasks |
-| `beeThreads` | Full API with all features |
-| `AbortError` | Thrown on cancellation |
-| `TimeoutError` | Thrown on timeout |
-| `QueueFullError` | Thrown when queue limit reached |
-| `WorkerError` | Wraps errors from worker (preserves custom properties) |
-| `noopLogger` | Silent logger for disabling logs |
+| Export           | Description                                            |
+| ---------------- | ------------------------------------------------------ |
+| `bee(fn)`        | Simple curried API for quick tasks                     |
+| `beeThreads`     | Full API with all features                             |
+| `AbortError`     | Thrown on cancellation                                 |
+| `TimeoutError`   | Thrown on timeout                                      |
+| `QueueFullError` | Thrown when queue limit reached                        |
+| `WorkerError`    | Wraps errors from worker (preserves custom properties) |
+| `noopLogger`     | Silent logger for disabling logs                       |
 
 **Example:**
 
 ```js
-const { bee, beeThreads, TimeoutError } = require('bee-threads');
+const { bee, beeThreads, TimeoutError } = require('bee-threads')
 
 // Simple API
-const result = await bee((x) => x * 2)(21);
+const result = await bee(x => x * 2)(21)
 
 // Full API
 const result = await beeThreads
-  .run((x) => x * 2)
-  .usingParams(21)
-  .execute();
+	.run(x => x * 2)
+	.usingParams(21)
+	.execute()
 ```
 
 ---
@@ -163,30 +167,31 @@ const result = await beeThreads
 Centralizes all type definitions for the entire library. Enables full IntelliSense support and compile-time type checking.
 
 **What it does:**
-- Defines all interfaces (`PoolConfig`, `WorkerEntry`, `ExecutionOptions`, etc.)
-- Defines message types for worker communication
-- Exports the `noopLogger` for disabling logs
+
+-  Defines all interfaces (`PoolConfig`, `WorkerEntry`, `ExecutionOptions`, etc.)
+-  Defines message types for worker communication
+-  Exports the `noopLogger` for disabling logs
 
 **Key types:**
 
 ```typescript
 // Message types for worker communication
 const MessageType = {
-  SUCCESS: 'success',
-  ERROR: 'error',
-  LOG: 'log',
-  YIELD: 'yield',
-  RETURN: 'return',
-  END: 'end',
-} as const;
+	SUCCESS: 'success',
+	ERROR: 'error',
+	LOG: 'log',
+	YIELD: 'yield',
+	RETURN: 'return',
+	END: 'end',
+} as const
 
 // Logger interface (compatible with Pino, Winston, console)
 interface Logger {
-  log(...args: unknown[]): void;
-  warn(...args: unknown[]): void;
-  error(...args: unknown[]): void;
-  info(...args: unknown[]): void;
-  debug(...args: unknown[]): void;
+	log(...args: unknown[]): void
+	warn(...args: unknown[]): void
+	error(...args: unknown[]): void
+	info(...args: unknown[]): void
+	debug(...args: unknown[]): void
 }
 ```
 
@@ -200,19 +205,20 @@ interface Logger {
 Single source of truth for ALL mutable state. Makes debugging easier and testing predictable.
 
 **What it does:**
-- Stores pool configuration (`poolSize`, `minThreads`, `timeout`, etc.)
-- Manages worker pools (`pools.normal`, `pools.generator`)
-- Maintains O(1) counters for busy/idle workers
-- Tracks execution metrics
+
+-  Stores pool configuration (`poolSize`, `minThreads`, `timeout`, etc.)
+-  Manages worker pools (`pools.normal`, `pools.generator`)
+-  Maintains O(1) counters for busy/idle workers
+-  Tracks execution metrics
 
 **State managed:**
 
 ```typescript
-config       // User settings (poolSize, timeout, retry, etc.)
-pools        // Active workers { normal: Worker[], generator: Worker[] }
+config // User settings (poolSize, timeout, retry, etc.)
+pools // Active workers { normal: Worker[], generator: Worker[] }
 poolCounters // O(1) counters { busy: N, idle: N }
-queues       // Pending tasks by priority { high: [], normal: [], low: [] }
-metrics      // Execution statistics
+queues // Pending tasks by priority { high: [], normal: [], low: [] }
+metrics // Execution statistics
 ```
 
 **Technical Decision:** `poolCounters` exist for O(1) state checks. Instead of `pools.filter(w => !w.busy).length` (O(n)), we maintain counters that update on every state change.
@@ -225,29 +231,30 @@ metrics      // Execution statistics
 Manages the lifecycle of worker threads with intelligent task routing.
 
 **What it does:**
-- Creates workers with proper configuration
-- Selects best worker for each task (load balancing + affinity)
-- Returns workers to pool after use
-- Cleans up idle workers to free resources
-- Manages temporary overflow workers
+
+-  Creates workers with proper configuration
+-  Selects best worker for each task (load balancing + affinity)
+-  Returns workers to pool after use
+-  Cleans up idle workers to free resources
+-  Manages temporary overflow workers
 
 **Selection Strategy (priority order):**
 
-| Priority | Strategy | Why |
-|----------|----------|-----|
-| 1 | **Affinity match** | Worker already has function cached & V8-optimized |
-| 2 | **Least-used idle** | Distributes load evenly across pool |
-| 3 | **Create new pooled** | Pool not at capacity |
-| 4 | **Create temporary** | Overflow handling, terminated after use |
-| 5 | **Queue task** | No resources available |
+| Priority | Strategy              | Why                                               |
+| -------- | --------------------- | ------------------------------------------------- |
+| 1        | **Affinity match**    | Worker already has function cached & V8-optimized |
+| 2        | **Least-used idle**   | Distributes load evenly across pool               |
+| 3        | **Create new pooled** | Pool not at capacity                              |
+| 4        | **Create temporary**  | Overflow handling, terminated after use           |
+| 5        | **Queue task**        | No resources available                            |
 
 **Example:**
 
 ```js
 // Affinity in action
-await bee((x) => heavyComputation(x))(1); // Worker A
-await bee((x) => heavyComputation(x))(2); // Worker A again (affinity hit)
-await bee((y) => differentFn(y))(3);      // Worker B (affinity miss)
+await bee(x => heavyComputation(x))(1) // Worker A
+await bee(x => heavyComputation(x))(2) // Worker A again (affinity hit)
+await bee(y => differentFn(y))(3) // Worker B (affinity miss)
 ```
 
 ---
@@ -258,12 +265,13 @@ await bee((y) => differentFn(y))(3);      // Worker B (affinity miss)
 Heart of task execution. Orchestrates worker communication and handles edge cases.
 
 **What it does:**
-- Acquires worker from pool (with affinity preference)
-- Sends task to worker via `postMessage`
-- Handles responses, errors, and timeouts
-- Releases worker back to pool
-- Tracks metrics for monitoring
-- Implements retry with exponential backoff
+
+-  Acquires worker from pool (with affinity preference)
+-  Sends task to worker via `postMessage`
+-  Handles responses, errors, and timeouts
+-  Releases worker back to pool
+-  Tracks metrics for monitoring
+-  Implements retry with exponential backoff
 
 **Race Condition Prevention:**
 
@@ -293,18 +301,38 @@ timer = setTimeout(() => {
 Implements the immutable builder pattern for task execution.
 
 **What it does:**
-- Creates chainable API (`.usingParams()`, `.setContext()`, `.retry()`, etc.)
-- Each method returns a NEW executor instance (immutable)
-- Validates inputs before execution
+
+-  Creates chainable API (`.usingParams()`, `.setContext()`, `.retry()`, `.noCoalesce()`, etc.)
+-  Each method returns a NEW executor instance (immutable)
+-  Validates inputs before execution
+
+**Chainable methods:**
+
+| Method                     | Description                                |
+| -------------------------- | ------------------------------------------ |
+| `.usingParams(...args)`    | Pass arguments to the function             |
+| `.setContext(obj)`         | Inject external variables (closures)       |
+| `.signal(AbortSignal)`     | Enable cancellation                        |
+| `.retry(options)`          | Auto-retry on failure                      |
+| `.priority(level)`         | Set queue priority                         |
+| `.transfer([ArrayBuffer])` | Zero-copy for large binary data            |
+| `.noCoalesce()`            | Skip request coalescing for this execution |
+| `.execute()`               | Run the function                           |
 
 **Example:**
 
 ```js
 // Immutable - base can be reused
-const base = beeThreads.run(fn).setContext({ API_KEY: 'xxx' });
+const base = beeThreads.run(fn).setContext({ API_KEY: 'xxx' })
 
-await base.usingParams(1).execute(); // Uses context
-await base.usingParams(2).execute(); // Same context, different params
+await base.usingParams(1).execute() // Uses context
+await base.usingParams(2).execute() // Same context, different params
+
+// Skip coalescing for specific call
+await beeThreads
+	.run(() => Date.now())
+	.noCoalesce()
+	.execute()
 ```
 
 **Validation:**
@@ -328,29 +356,30 @@ setContext(context: Record<string, unknown>): Executor<T> {
 Enables streaming results from generator functions.
 
 **What it does:**
-- Creates `ReadableStream` from generator functions
-- Streams yielded values as they're produced
-- Captures return value for access after completion
-- Handles cleanup on cancel
+
+-  Creates `ReadableStream` from generator functions
+-  Streams yielded values as they're produced
+-  Captures return value for access after completion
+-  Handles cleanup on cancel
 
 **Example:**
 
 ```js
 const stream = beeThreads
-  .stream(function* (n) {
-    for (let i = 1; i <= n; i++) {
-      yield i * i;
-    }
-    return 'done';
-  })
-  .usingParams(5)
-  .execute();
+	.stream(function* (n) {
+		for (let i = 1; i <= n; i++) {
+			yield i * i
+		}
+		return 'done'
+	})
+	.usingParams(5)
+	.execute()
 
 for await (const value of stream) {
-  console.log(value); // 1, 4, 9, 16, 25
+	console.log(value) // 1, 4, 9, 16, 25
 }
 
-console.log(stream.returnValue); // 'done'
+console.log(stream.returnValue) // 'done'
 ```
 
 ---
@@ -361,28 +390,29 @@ console.log(stream.returnValue); // 'done'
 Avoids repeated function compilation for massive performance gains.
 
 **What it does:**
-- Compiles functions using `vm.Script` (not `eval()`)
-- Caches compiled functions in LRU cache
-- Creates optimized sandbox for context injection
-- Reuses shared base context when no custom context needed
+
+-  Compiles functions using `vm.Script` (not `eval()`)
+-  Caches compiled functions in LRU cache
+-  Creates optimized sandbox for context injection
+-  Reuses shared base context when no custom context needed
 
 **Performance comparison:**
 
-| Operation | Time |
-|-----------|------|
-| vm.Script compile | ~0.3-0.5ms |
-| Cache lookup | ~0.001ms |
-| **Speedup** | **300-500x** |
+| Operation         | Time         |
+| ----------------- | ------------ |
+| vm.Script compile | ~0.3-0.5ms   |
+| Cache lookup      | ~0.001ms     |
+| **Speedup**       | **300-500x** |
 
 **Why vm.Script instead of eval():**
 
-| Aspect | eval() | vm.Script |
-|--------|--------|-----------|
-| Context injection | String manipulation | Native runInContext() |
-| V8 code caching | Lost on string change | produceCachedData: true |
-| Performance (cached) | ~1.2-3µs | ~0.08-0.3µs |
-| Performance (w/ context) | ~4.8ms | ~0.1ms (43x faster) |
-| Stack traces | Shows "eval" | Proper filename |
+| Aspect                   | eval()                | vm.Script               |
+| ------------------------ | --------------------- | ----------------------- |
+| Context injection        | String manipulation   | Native runInContext()   |
+| V8 code caching          | Lost on string change | produceCachedData: true |
+| Performance (cached)     | ~1.2-3µs              | ~0.08-0.3µs             |
+| Performance (w/ context) | ~4.8ms                | ~0.1ms (43x faster)     |
+| Stack traces             | Shows "eval"          | Proper filename         |
 
 **Technical Decision:** When no context is needed (~90% of cases), we reuse a shared base context instead of creating a new V8 context (~1-2MB each).
 
@@ -394,35 +424,36 @@ Avoids repeated function compilation for massive performance gains.
 The code that runs inside each worker thread for regular functions.
 
 **What it does:**
-- Receives function source + arguments + context from main thread
-- Validates function source (with caching)
-- Compiles using vm.Script with LRU caching
-- Executes function (handles async and curried)
-- Sends result back to main thread
-- Forwards console.log/warn/error to main thread
+
+-  Receives function source + arguments + context from main thread
+-  Validates function source (with caching)
+-  Compiles using vm.Script with LRU caching
+-  Executes function (handles async and curried)
+-  Sends result back to main thread
+-  Forwards console.log/warn/error to main thread
 
 **Error Serialization:**
 
 ```typescript
 function serializeError(e: unknown): SerializedError {
-  const serialized = {
-    name: err.name,
-    message: err.message,
-    stack: err.stack,
-    // Preserve Error.cause (ES2022)
-    cause: err.cause ? serializeError(err.cause) : undefined,
-    // Preserve AggregateError.errors
-    errors: err.errors?.map(serializeError),
-  };
-  
-  // Copy custom properties (code, statusCode, etc.)
-  for (const key of Object.keys(err)) {
-    if (!['name', 'message', 'stack'].includes(key)) {
-      serialized[key] = err[key];
-    }
-  }
-  
-  return serialized;
+	const serialized = {
+		name: err.name,
+		message: err.message,
+		stack: err.stack,
+		// Preserve Error.cause (ES2022)
+		cause: err.cause ? serializeError(err.cause) : undefined,
+		// Preserve AggregateError.errors
+		errors: err.errors?.map(serializeError),
+	}
+
+	// Copy custom properties (code, statusCode, etc.)
+	for (const key of Object.keys(err)) {
+		if (!['name', 'message', 'stack'].includes(key)) {
+			serialized[key] = err[key]
+		}
+	}
+
+	return serialized
 }
 ```
 
@@ -436,10 +467,11 @@ function serializeError(e: unknown): SerializedError {
 The code that runs inside worker threads for generator functions.
 
 **What it does:**
-- Same as `worker.ts` but handles generators
-- Streams yielded values back to main thread
-- Captures return value for final message
-- Handles async generators (yields that return Promises)
+
+-  Same as `worker.ts` but handles generators
+-  Streams yielded values back to main thread
+-  Captures return value for final message
+-  Handles async generators (yields that return Promises)
 
 **Message flow:**
 
@@ -463,26 +495,28 @@ Typed errors for specific failure modes with error codes.
 
 **Error classes:**
 
-| Error | Code | When |
-|-------|------|------|
-| `AbortError` | `ERR_ABORTED` | Task cancelled via AbortSignal |
-| `TimeoutError` | `ERR_TIMEOUT` | Exceeded time limit |
-| `QueueFullError` | `ERR_QUEUE_FULL` | Queue at maxQueueSize |
-| `WorkerError` | `ERR_WORKER` | Error thrown inside worker |
+| Error            | Code             | When                           |
+| ---------------- | ---------------- | ------------------------------ |
+| `AbortError`     | `ERR_ABORTED`    | Task cancelled via AbortSignal |
+| `TimeoutError`   | `ERR_TIMEOUT`    | Exceeded time limit            |
+| `QueueFullError` | `ERR_QUEUE_FULL` | Queue at maxQueueSize          |
+| `WorkerError`    | `ERR_WORKER`     | Error thrown inside worker     |
 
 **Example:**
 
 ```js
 try {
-  await beeThreads.withTimeout(1000)(() => slowTask()).execute();
+	await beeThreads
+		.withTimeout(1000)(() => slowTask())
+		.execute()
 } catch (err) {
-  if (err instanceof TimeoutError) {
-    console.log(`Timed out after ${err.timeout}ms`);
-  }
-  if (err instanceof WorkerError) {
-    console.log(err.code);       // Custom error code preserved
-    console.log(err.statusCode); // Custom properties preserved
-  }
+	if (err instanceof TimeoutError) {
+		console.log(`Timed out after ${err.timeout}ms`)
+	}
+	if (err instanceof WorkerError) {
+		console.log(err.code) // Custom error code preserved
+		console.log(err.statusCode) // Custom properties preserved
+	}
 }
 ```
 
@@ -496,10 +530,58 @@ Fail-fast validation functions that throw immediately on invalid input.
 **Functions:**
 
 ```typescript
-validateFunction(fn)   // Ensures fn is a callable function
-validateTimeout(ms)    // Ensures ms is positive finite number
+validateFunction(fn) // Ensures fn is a callable function
+validateTimeout(ms) // Ensures ms is positive finite number
 validatePoolSize(size) // Ensures size is positive integer
-validateClosure(obj)   // Ensures obj is non-null object
+validateClosure(obj) // Ensures obj is non-null object
+```
+
+---
+
+### `src/coalescing.ts` - Request Coalescing (Promise Deduplication)
+
+**Why it exists:**
+Prevents duplicate simultaneous calls with the same function and arguments from executing multiple times. Also known as "singleflight" or "promise deduplication".
+
+**What it does:**
+
+-  Tracks in-flight promises by unique request key (function hash + arguments hash)
+-  Returns existing promise for duplicate requests
+-  Automatically detects non-deterministic functions (`Date.now()`, `Math.random()`, etc.)
+-  Provides statistics for monitoring coalescing effectiveness
+
+**Key functions:**
+
+```typescript
+coalesce(key, factory) // Returns existing or creates new promise
+isNonDeterministic(fnStr) // Detects Date.now, Math.random, etc.
+setCoalescingEnabled(bool) // Enable/disable globally
+isCoalescingEnabled() // Check if enabled
+getCoalescingStats() // { coalesced, unique, inFlight, coalescingRate }
+resetCoalescingStats() // Reset counters
+clearInFlightPromises() // Clear pending promises (used in shutdown)
+```
+
+**Non-deterministic patterns detected:**
+
+| Pattern                        | Example                          |
+| ------------------------------ | -------------------------------- |
+| `Date.now()`                   | `() => Date.now()`               |
+| `new Date()`                   | `() => new Date().toISOString()` |
+| `Math.random()`                | `() => Math.random()`            |
+| `crypto.randomUUID()`          | `() => crypto.randomUUID()`      |
+| `performance.now()`            | `() => performance.now()`        |
+| `uuid()`, `nanoid()`, `cuid()` | Common ID generation libraries   |
+| `process.hrtime`               | `() => process.hrtime.bigint()`  |
+
+**Example:**
+
+```js
+// Without coalescing: 3 separate executions
+await Promise.all([bee(expensiveFn)(42), bee(expensiveFn)(42), bee(expensiveFn)(42)])
+
+// With coalescing (default): 1 execution, 3 promises share result
+// Stats: { coalesced: 2, unique: 1, coalescingRate: '66.67%' }
 ```
 
 ---
@@ -513,13 +595,13 @@ Shared utility functions used across the codebase.
 
 ```typescript
 // Recursively freeze an object
-deepFreeze({ a: { b: 1 } });
+deepFreeze({ a: { b: 1 } })
 
 // Promise-based sleep
-await sleep(1000);
+await sleep(1000)
 
 // Exponential backoff with jitter
-calculateBackoff(attempt, baseDelay, maxDelay, factor);
+calculateBackoff(attempt, baseDelay, maxDelay, factor)
 ```
 
 ---
@@ -531,66 +613,87 @@ calculateBackoff(attempt, baseDelay, maxDelay, factor);
 **Decision:** Use `vm.Script` with `vm.createContext()` instead of `eval()`.
 
 **Rationale:**
-- **43x faster** for context injection scenarios
-- Native `runInContext()` vs string manipulation
-- V8 code caching with `produceCachedData: true`
-- Proper stack traces (shows filename instead of "eval")
+
+-  **43x faster** for context injection scenarios
+-  Native `runInContext()` vs string manipulation
+-  V8 code caching with `produceCachedData: true`
+-  Proper stack traces (shows filename instead of "eval")
 
 ### 2. Why LRU cache for functions?
 
 **Decision:** Cache compiled functions using LRU (Least Recently Used) strategy.
 
 **Rationale:**
-- Compilation is expensive (~0.3-0.5ms)
-- Cache lookup is cheap (~0.001ms)
-- LRU ensures frequently-used functions stay cached
-- Bounded size prevents memory bloat
+
+-  Compilation is expensive (~0.3-0.5ms)
+-  Cache lookup is cheap (~0.001ms)
+-  LRU ensures frequently-used functions stay cached
+-  Bounded size prevents memory bloat
 
 ### 3. Why worker affinity?
 
 **Decision:** Route same function to same worker when possible.
 
 **Rationale:**
-- V8's TurboFan JIT compiles hot functions to machine code
-- Affinity keeps functions "hot" in the same worker
-- Combined with LRU cache = near-native performance
-- Hash-based routing is O(1)
+
+-  V8's TurboFan JIT compiles hot functions to machine code
+-  Affinity keeps functions "hot" in the same worker
+-  Combined with LRU cache = near-native performance
+-  Hash-based routing is O(1)
 
 ### 4. Why O(1) counters instead of array iteration?
 
 **Decision:** Maintain separate `busy` and `idle` counters.
 
 **Rationale:**
-- `pools.filter(w => !w.busy).length` is O(n)
-- Counter updates on state change are O(1)
-- Critical for high-throughput scenarios
+
+-  `pools.filter(w => !w.busy).length` is O(n)
+-  Counter updates on state change are O(1)
+-  Critical for high-throughput scenarios
 
 ### 5. Why shared base context?
 
 **Decision:** Reuse a single `vm.Context` when no custom context is needed.
 
 **Rationale:**
-- Creating a new context is expensive (~1-2MB each)
-- ~90% of calls don't need custom context
-- Massive memory savings in high-volume scenarios
+
+-  Creating a new context is expensive (~1-2MB each)
+-  ~90% of calls don't need custom context
+-  Massive memory savings in high-volume scenarios
 
 ### 6. Why settled flag before terminate()?
 
 **Decision:** Set `settled = true` BEFORE calling `worker.terminate()`.
 
 **Rationale:**
-- `terminate()` fires `exit` event asynchronously
-- Without the flag, `onExit` could race with timeout handler
-- This caused ~50% wrong error type in v3.1.1
+
+-  `terminate()` fires `exit` event asynchronously
+-  Without the flag, `onExit` could race with timeout handler
+-  This caused ~50% wrong error type in v3.1.1
 
 ### 7. Why monomorphic object shapes?
 
 **Decision:** Declare all properties upfront in objects like `SerializedError`.
 
 **Rationale:**
-- V8 optimizes objects with consistent shapes (hidden classes)
-- Adding properties dynamically causes deoptimization
-- Pre-declaring `undefined` properties maintains shape
+
+-  V8 optimizes objects with consistent shapes (hidden classes)
+-  Adding properties dynamically causes deoptimization
+-  Pre-declaring `undefined` properties maintains shape
+
+### 8. Why request coalescing (singleflight)?
+
+**Decision:** Deduplicate identical simultaneous calls by sharing the same promise.
+
+**Rationale:**
+
+-  Prevents redundant work when multiple callers request the same computation
+-  Common in web servers: multiple requests for same data hit simultaneously
+-  Uses minimal memory (Map of in-flight promises, cleared on completion)
+-  Automatic detection of non-deterministic functions avoids incorrect sharing
+-  Manual opt-out via `.noCoalesce()` for edge cases
+
+**Trade-off:** Functions with side effects that should run multiple times need `.noCoalesce()`.
 
 ### 8. Why security by default?
 
@@ -701,14 +804,14 @@ beeThreads.configure({
 
 ### Micro-Optimizations Applied (v3.1.3)
 
-| Category | Count | Examples |
-|----------|-------|----------|
-| **Loop replacements** | 24 | `for...of` → classic `for` with cached length |
-| **Array method replacements** | 12 | `.map()`, `.filter()`, `.some()` → manual loops |
-| **Spread → concat** | 6 | `[...a, ...b]` → `a.concat(b)` |
-| **Monomorphic objects** | 6 | Pre-declare all properties |
-| **O(1) lookups** | 4 | `.includes()` → direct comparison |
-| **Big O reductions** | 2 | O(2n) → O(n) |
+| Category                      | Count | Examples                                        |
+| ----------------------------- | ----- | ----------------------------------------------- |
+| **Loop replacements**         | 24    | `for...of` → classic `for` with cached length   |
+| **Array method replacements** | 12    | `.map()`, `.filter()`, `.some()` → manual loops |
+| **Spread → concat**           | 6     | `[...a, ...b]` → `a.concat(b)`                  |
+| **Monomorphic objects**       | 6     | Pre-declare all properties                      |
+| **O(1) lookups**              | 4     | `.includes()` → direct comparison               |
+| **Big O reductions**          | 2     | O(2n) → O(n)                                    |
 
 ---
 
@@ -766,10 +869,10 @@ catch (err) {
 
 ```js
 // Error.cause is preserved
-throw new Error('High level', { cause: lowLevelError });
+throw new Error('High level', { cause: lowLevelError })
 
 // AggregateError.errors are preserved
-throw new AggregateError([err1, err2], 'Multiple failures');
+throw new AggregateError([err1, err2], 'Multiple failures')
 ```
 
 ---
@@ -781,14 +884,15 @@ throw new AggregateError([err1, err2], 'Multiple failures');
 For memory-constrained environments (IoT, serverless):
 
 ```js
-beeThreads.configure({ lowMemoryMode: true });
+beeThreads.configure({ lowMemoryMode: true })
 ```
 
 Effects:
-- Function cache size reduced to 10 (default: 100) → ~35-50% less memory
-- Validation cache disabled → ~10-20% less memory
-- Worker affinity tracking disabled → ~15-25% less memory
-- **Total reduction: ~60-80% less memory**
+
+-  Function cache size reduced to 10 (default: 100) → ~35-50% less memory
+-  Validation cache disabled → ~10-20% less memory
+-  Worker affinity tracking disabled → ~15-25% less memory
+-  **Total reduction: ~60-80% less memory**
 
 Trade-off: Slower repeated executions (no caching benefits).
 
@@ -798,12 +902,29 @@ Control V8 heap size per worker:
 
 ```js
 beeThreads.configure({
-  resourceLimits: {
-    maxOldGenerationSizeMb: 256,  // Default: 512
-    maxYoungGenerationSizeMb: 64, // Default: 128
-    codeRangeSizeMb: 32           // Default: 64
-  }
-});
+	resourceLimits: {
+		maxOldGenerationSizeMb: 256, // Default: 512
+		maxYoungGenerationSizeMb: 64, // Default: 128
+		codeRangeSizeMb: 32, // Default: 64
+	},
+})
+```
+
+### Request Coalescing
+
+Disable request coalescing globally:
+
+```js
+beeThreads.configure({ coalescing: false })
+```
+
+Or disable per-execution:
+
+```js
+await beeThreads
+	.run(() => sideEffectFn())
+	.noCoalesce()
+	.execute()
 ```
 
 ---
@@ -944,17 +1065,17 @@ npm run build && node dist/bundle.js
 ### Running Tests
 
 ```bash
-npm test  # Builds and runs 203 tests
+npm test  # Builds and runs 217 tests
 ```
 
 ### Code Style
 
-- TypeScript strict mode
-- JSDoc on all public functions
-- "Why this exists" comments on modules
-- Descriptive names (no abbreviations)
-- Small, focused functions (< 50 lines preferred)
-- Centralized state in config.ts
+-  TypeScript strict mode
+-  JSDoc on all public functions
+-  "Why this exists" comments on modules
+-  Descriptive names (no abbreviations)
+-  Small, focused functions (< 50 lines preferred)
+-  Centralized state in config.ts
 
 ### Performance Guidelines
 

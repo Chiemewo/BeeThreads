@@ -126,6 +126,12 @@ export interface ConfigureOptions {
    */
   logger?: Logger | null;
   /**
+   * Enable request coalescing (promise deduplication).
+   * When enabled, identical simultaneous calls share the same result.
+   * @default true
+   */
+  coalescing?: boolean;
+  /**
    * Security options (transparent - doesn't affect normal usage).
    */
   security?: Partial<SecurityConfig>;
@@ -190,6 +196,8 @@ export interface ExecutionOptions {
   signal?: AbortSignal | null;
   context?: Record<string, unknown> | null;
   priority?: Priority;
+  /** Skip request coalescing for this execution (for non-deterministic functions) */
+  skipCoalescing?: boolean;
 }
 
 /** Retry options for executor */
@@ -412,6 +420,12 @@ export interface FullPoolStats {
   };
   metrics: Metrics & {
     affinityHitRate: string;
+  };
+  coalescing: {
+    coalesced: number;
+    unique: number;
+    inFlight: number;
+    coalescingRate: string;
   };
 }
 

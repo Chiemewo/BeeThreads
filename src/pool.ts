@@ -45,17 +45,8 @@ interface TemporaryWorker extends Worker {
 // FUNCTION AFFINITY TRACKING
 // ============================================================================
 
-/**
- * Creates a fast hash for function affinity tracking.
- * Uses djb2 algorithm - fast and good distribution.
- */
-export function fastHash(str: string): string {
-  let hash = 5381;
-  for (let i = 0, len = str.length; i < len; i++) {
-    hash = ((hash << 5) + hash) ^ str.charCodeAt(i);
-  }
-  return (hash >>> 0).toString(36);
-}
+// Re-export fastHash from cache.ts for backwards compatibility
+export { fastHash } from './cache';
 
 /**
  * Creates a new worker with tracking metadata.

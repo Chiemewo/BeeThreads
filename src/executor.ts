@@ -62,6 +62,7 @@ export interface Executor<T = unknown> {
   transfer(list: ArrayBuffer[]): Executor<T>;
   retry(retryOptions?: RetryOptions): Executor<T>;
   priority(level: Priority): Executor<T>;
+  noCoalesce(): Executor<T>;
   execute(): Promise<T>;
 }
 
@@ -178,6 +179,24 @@ export function createExecutor<T = unknown>(state: ExecutorState): Executor<T> {
       return createExecutor<T>({
         fnString,
         options: { ...options, priority: level },
+        args
+      });
+    },
+
+    /**
+     * Disables request coalescing for this execution.
+     * Use for non-deterministic functions that should always execute separately.
+     * 
+     * Note: Coalescing is automatically disabled for functions containing
+     * Date.now, Math.random, crypto.randomUUID, etc.
+     * 
+     * @example
+     * await beeThreads.run(() => fetchLatestData()).noCoalesce().execute();
+     */
+    noCoalesce(): Executor<T> {
+      return createExecutor<T>({
+        fnString,
+        options: { ...options, skipCoalescing: true },
         args
       });
     },

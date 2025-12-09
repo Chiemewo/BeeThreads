@@ -50,7 +50,15 @@ import {
 } from './errors';
 import { execute } from './execution';
 import { noopLogger } from './types';
+import {
+  setCoalescingEnabled,
+  isCoalescingEnabled,
+  getCoalescingStats,
+  resetCoalescingStats,
+  clearInFlightPromises
+} from './coalescing';
 import type { ConfigureOptions, FullPoolStats } from './types';
+import type { CoalescingStats } from './coalescing';
 
 // ============================================================================
 // SIMPLE CURRIED API
@@ -301,6 +309,12 @@ export const beeThreads = {
       }
       config.logger = options.logger;
     }
+    if (options.coalescing !== undefined) {
+      if (typeof options.coalescing !== 'boolean') {
+        throw new TypeError('coalescing must be a boolean');
+      }
+      setCoalescingEnabled(options.coalescing);
+    }
     // Security options
     if (options.security !== undefined) {
       if (options.security.maxFunctionSize !== undefined) {
@@ -335,6 +349,9 @@ export const beeThreads = {
    * Gracefully shuts down all worker pools.
    */
   async shutdown(): Promise<void> {
+    // Clear in-flight promise cache (coalescing)
+    clearInFlightPromises();
+
     // Reject all queued tasks - using direct access (faster than array iteration)
     const normalQueue = queues.normal;
     const generatorQueue = queues.generator;
@@ -475,8 +492,47 @@ export const beeThreads = {
         affinityHitRate: (metrics.affinityHits + metrics.affinityMisses) > 0
           ? ((metrics.affinityHits / (metrics.affinityHits + metrics.affinityMisses)) * 100).toFixed(1) + '%'
           : '0%'
-      }
+      },
+
+      coalescing: getCoalescingStats()
     }) as Readonly<FullPoolStats>;
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // REQUEST COALESCING (Promise Deduplication)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Enables or disables request coalescing (promise deduplication).
+   * 
+   * When enabled, identical concurrent requests share the same Promise,
+   * avoiding duplicate worker executions.
+   * 
+   * @param enabled - Whether to enable coalescing (default: true)
+   */
+  setCoalescing(enabled: boolean): void {
+    setCoalescingEnabled(enabled);
+  },
+
+  /**
+   * Returns whether request coalescing is currently enabled.
+   */
+  isCoalescingEnabled(): boolean {
+    return isCoalescingEnabled();
+  },
+
+  /**
+   * Returns request coalescing statistics.
+   */
+  getCoalescingStats(): CoalescingStats {
+    return getCoalescingStats();
+  },
+
+  /**
+   * Resets coalescing statistics counters.
+   */
+  resetCoalescingStats(): void {
+    resetCoalescingStats();
   }
 };
 
@@ -507,6 +563,9 @@ export type {
   SafeFulfilled,
   SafeRejected
 } from './types';
+
+// Re-export types from coalescing module
+export type { CoalescingStats } from './coalescing';
 
 // Re-export Runtime type
 export type { Runtime } from './config';

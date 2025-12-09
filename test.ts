@@ -2288,6 +2288,206 @@ async function runTests(): Promise<void> {
   // Reset logger
   beeThreads.configure({ logger: console });
 
+  // ---------- REQUEST COALESCING ----------
+  section('Request Coalescing (Promise Deduplication)');
+
+  await test('isCoalescingEnabled() returns true by default', () => {
+    assert.strictEqual(beeThreads.isCoalescingEnabled(), true);
+  });
+
+  await test('setCoalescing() enables/disables coalescing', () => {
+    beeThreads.setCoalescing(false);
+    assert.strictEqual(beeThreads.isCoalescingEnabled(), false);
+    
+    beeThreads.setCoalescing(true);
+    assert.strictEqual(beeThreads.isCoalescingEnabled(), true);
+  });
+
+  await test('getCoalescingStats() returns stats object', () => {
+    beeThreads.resetCoalescingStats();
+    const stats = beeThreads.getCoalescingStats();
+    
+    assert.ok('coalesced' in stats, 'Should have coalesced count');
+    assert.ok('unique' in stats, 'Should have unique count');
+    assert.ok('inFlight' in stats, 'Should have inFlight count');
+    assert.ok('coalescingRate' in stats, 'Should have coalescingRate');
+  });
+
+  await test('resetCoalescingStats() resets counters', () => {
+    beeThreads.resetCoalescingStats();
+    const stats = beeThreads.getCoalescingStats();
+    
+    assert.strictEqual(stats.coalesced, 0);
+    assert.strictEqual(stats.unique, 0);
+  });
+
+  await test('identical concurrent requests are coalesced', async () => {
+    beeThreads.resetCoalescingStats();
+    
+    // Create a slow function to ensure requests overlap
+    const slowFn = async (x: number) => {
+      // Simulate work
+      let sum = 0;
+      for (let i = 0; i < 1000000; i++) sum += i;
+      return x * 2;
+    };
+    
+    // Launch 5 identical requests concurrently
+    const promises = [
+      bee(slowFn)(21),
+      bee(slowFn)(21),
+      bee(slowFn)(21),
+      bee(slowFn)(21),
+      bee(slowFn)(21)
+    ];
+    
+    const results = await Promise.all(promises);
+    
+    // All should return the same result
+    assert.ok(results.every(r => r === 42), 'All results should be 42');
+    
+    // Check that coalescing happened
+    const stats = beeThreads.getCoalescingStats();
+    assert.ok(stats.coalesced >= 1, `Should have coalesced at least 1 request, got ${stats.coalesced}`);
+  });
+
+  await test('different arguments create separate executions', async () => {
+    beeThreads.resetCoalescingStats();
+    
+    // Launch requests with different arguments
+    const promises = [
+      bee((x: number) => x * 2)(1),
+      bee((x: number) => x * 2)(2),
+      bee((x: number) => x * 2)(3)
+    ];
+    
+    const results = await Promise.all(promises);
+    
+    assert.deepStrictEqual(results, [2, 4, 6], 'Results should be different');
+    
+    // All should be unique (no coalescing)
+    const stats = beeThreads.getCoalescingStats();
+    assert.strictEqual(stats.unique, 3, 'Should have 3 unique requests');
+  });
+
+  await test('coalescing stats appear in getPoolStats()', () => {
+    const poolStats = beeThreads.getPoolStats();
+    
+    assert.ok('coalescing' in poolStats, 'Pool stats should include coalescing');
+    assert.ok('coalesced' in poolStats.coalescing, 'Should have coalesced count');
+    assert.ok('unique' in poolStats.coalescing, 'Should have unique count');
+    assert.ok('coalescingRate' in poolStats.coalescing, 'Should have coalescingRate');
+  });
+
+  await test('disabling coalescing prevents deduplication', async () => {
+    beeThreads.setCoalescing(false);
+    beeThreads.resetCoalescingStats();
+    
+    const slowFn = async () => {
+      let sum = 0;
+      for (let i = 0; i < 100000; i++) sum += i;
+      return sum;
+    };
+    
+    // Launch identical requests
+    const promises = [
+      bee(slowFn)(),
+      bee(slowFn)(),
+      bee(slowFn)()
+    ];
+    
+    await Promise.all(promises);
+    
+    const stats = beeThreads.getCoalescingStats();
+    assert.strictEqual(stats.coalesced, 0, 'No requests should be coalesced when disabled');
+    
+    // Re-enable coalescing
+    beeThreads.setCoalescing(true);
+  });
+
+  await test('inFlight count is zero after all promises resolve', async () => {
+    beeThreads.resetCoalescingStats();
+    
+    await bee((x: number) => x * 2)(21);
+    
+    const stats = beeThreads.getCoalescingStats();
+    assert.strictEqual(stats.inFlight, 0, 'No promises should be in-flight after completion');
+  });
+
+  await test('non-deterministic functions (Date.now) skip coalescing automatically', async () => {
+    beeThreads.resetCoalescingStats();
+    
+    // Function with Date.now should not be coalesced
+    const timeFn = () => Date.now();
+    
+    // Launch 3 concurrent requests - they should all execute separately
+    const promises = [
+      bee(timeFn)(),
+      bee(timeFn)(),
+      bee(timeFn)()
+    ];
+    
+    await Promise.all(promises);
+    
+    const stats = beeThreads.getCoalescingStats();
+    // No coalescing should happen for Date.now functions
+    assert.strictEqual(stats.coalesced, 0, 'Date.now functions should not be coalesced');
+  });
+
+  await test('non-deterministic functions (Math.random) skip coalescing automatically', async () => {
+    beeThreads.resetCoalescingStats();
+    
+    // Function with Math.random should not be coalesced
+    const randomFn = () => Math.random();
+    
+    const results = await Promise.all([
+      bee(randomFn)(),
+      bee(randomFn)(),
+      bee(randomFn)()
+    ]);
+    
+    const stats = beeThreads.getCoalescingStats();
+    assert.strictEqual(stats.coalesced, 0, 'Math.random functions should not be coalesced');
+  });
+
+  await test('noCoalesce() method exists on executor', () => {
+    const executor = beeThreads.run(() => 42);
+    assert.ok(typeof executor.noCoalesce === 'function', 'Should have noCoalesce method');
+  });
+
+  await test('noCoalesce() forces separate executions', async () => {
+    beeThreads.resetCoalescingStats();
+    
+    // Deterministic function that would normally be coalesced
+    const slowFn = async () => {
+      let sum = 0;
+      for (let i = 0; i < 100000; i++) sum += i;
+      return sum;
+    };
+    
+    // With noCoalesce(), each should execute separately
+    const promises = [
+      beeThreads.run(slowFn).noCoalesce().execute(),
+      beeThreads.run(slowFn).noCoalesce().execute(),
+      beeThreads.run(slowFn).noCoalesce().execute()
+    ];
+    
+    await Promise.all(promises);
+    
+    const stats = beeThreads.getCoalescingStats();
+    assert.strictEqual(stats.coalesced, 0, 'noCoalesce() should prevent coalescing');
+  });
+
+  await test('noCoalesce() can be chained with other methods', async () => {
+    const result = await beeThreads
+      .run((x: number, y: number) => x + y)
+      .usingParams(1, 2)
+      .noCoalesce()
+      .execute();
+    
+    assert.strictEqual(result, 3);
+  });
+
   // ---------- SYMBOL.DISPOSE ----------
   section('Symbol.dispose Support');
 

@@ -39,6 +39,7 @@ import { requestWorker, releaseWorker, fastHash } from './pool';
 import { sleep, calculateBackoff } from './utils';
 import { AbortError, TimeoutError, WorkerError } from './errors';
 import { MessageType } from './types';
+import { coalesce } from './coalescing';
 import type {
   ExecutionOptions,
   WorkerResponseCompat,
@@ -298,37 +299,57 @@ export async function execute<T = unknown>(
   args: unknown[],
   options: ExecutionOptions & { retry?: RetryConfig } = {}
 ): Promise<T | SafeResult<T>> {
-  const { retry: retryOpts = config.retry, safe = false } = options;
+  const { retry: retryOpts = config.retry, safe = false, context = null, skipCoalescing = false } = options;
+  const fnString = fn.toString();
 
-  // No retry enabled - execute once
-  if (!retryOpts?.enabled) {
-    return executeOnce<T>(fn, args, options);
-  }
+  // Wrap execution in coalescing to deduplicate identical concurrent requests
+  // Note: Coalescing is skipped for requests with AbortSignal (each needs its own lifecycle)
+  const shouldCoalesce = !options.signal;
 
-  const { maxAttempts, baseDelay, maxDelay, backoffFactor } = retryOpts;
-  let lastError: Error | undefined;
+  const executeWithRetry = async (): Promise<T | SafeResult<T>> => {
+    // No retry enabled - execute once
+    if (!retryOpts?.enabled) {
+      return executeOnce<T>(fn, args, options);
+    }
 
-  for (let attempt = 0, len = maxAttempts; attempt < len; attempt++) {
-    try {
-      const result = await executeOnce<T>(fn, args, { ...options, safe: false });
-      return safe ? { status: 'fulfilled', value: result as T } : (result as T);
-    } catch (err) {
-      lastError = err as Error;
+    const { maxAttempts, baseDelay, maxDelay, backoffFactor } = retryOpts;
+    let lastError: Error | undefined;
 
-      // Never retry abort or timeout
-      if (err instanceof AbortError || err instanceof TimeoutError) break;
+    for (let attempt = 0, len = maxAttempts; attempt < len; attempt++) {
+      try {
+        const result = await executeOnce<T>(fn, args, { ...options, safe: false });
+        return safe ? { status: 'fulfilled', value: result as T } : (result as T);
+      } catch (err) {
+        lastError = err as Error;
 
-      // Wait before next attempt (except last)
-      if (attempt < maxAttempts - 1) {
-        metrics.totalRetries++;
-        await sleep(calculateBackoff(attempt, baseDelay, maxDelay, backoffFactor));
+        // Never retry abort or timeout
+        if (err instanceof AbortError || err instanceof TimeoutError) break;
+
+        // Wait before next attempt (except last)
+        if (attempt < maxAttempts - 1) {
+          metrics.totalRetries++;
+          await sleep(calculateBackoff(attempt, baseDelay, maxDelay, backoffFactor));
+        }
       }
     }
+
+    // All attempts failed (lastError is guaranteed to be set if we reach here)
+    const finalError = lastError ?? new Error('All retry attempts failed');
+    if (safe) return { status: 'rejected', error: finalError };
+    throw finalError;
+  };
+
+  // Apply coalescing if appropriate
+  if (shouldCoalesce) {
+    return await coalesce<T | SafeResult<T>>(
+      fnString,
+      args,
+      context,
+      executeWithRetry,
+      skipCoalescing
+    );
   }
 
-  // All attempts failed (lastError is guaranteed to be set if we reach here)
-  const finalError = lastError ?? new Error('All retry attempts failed');
-  if (safe) return { status: 'rejected', error: finalError };
-  throw finalError;
+  return await executeWithRetry();
 }
 

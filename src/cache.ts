@@ -314,9 +314,8 @@ export function createLRUCache<T>(maxSize: number = DEFAULT_MAX_SIZE, ttl: numbe
  *
  * @param str - String to hash
  * @returns Hash string (base36)
- * @internal
  */
-function fastHash(str: string): string {
+export function fastHash(str: string): string {
   let hash = 5381;
   for (let i = 0, len = str.length; i < len; i++) {
     hash = ((hash << 5) + hash) ^ str.charCodeAt(i);
@@ -335,9 +334,8 @@ function fastHash(str: string): string {
  *
  * @param context - Context object
  * @returns Context key
- * @internal
  */
-function createContextKey(context: unknown, level: number = 0): string {
+export function createContextKey(context: unknown, level: number = 0): string {
   if (context === undefined) {
     return ''; // Undefined as empty string
   }
