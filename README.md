@@ -22,22 +22,16 @@ npm install bee-threads
 ```
 
 ```js
-const { bee } = require('bee-threads');
+const { bee } = require('bee-threads')
 
 //Run any function in a separate thread - promise like
-const result = await bee((x) => x * 2)(21);  // 42
+const result = await bee(x => x * 2)(21) // 42
 
 //Non Blocking I/O in any CPU-Itensive operation.
-const hash = await bee((pwd) => 
-  require('crypto').pbkdf2Sync(pwd, 'salt', 100000, 64, 'sha512').toString('hex')
-)('password123');
+const hash = await bee(pwd => require('crypto').pbkdf2Sync(pwd, 'salt', 100000, 64, 'sha512').toString('hex'))('password123')
 
 //Run with Promise.all
-const [a, b, c] = await Promise.all([
-  bee((x) => x * 2)(21),
-  bee((x) => x + 1)(41),
-  bee(() => 'hello')()
-]);
+const [a, b, c] = await Promise.all([bee(x => x * 2)(21), bee(x => x + 1)(41), bee(() => 'hello')()])
 ```
 
 ---
@@ -54,30 +48,30 @@ const [a, b, c] = await Promise.all([
 
 ```js
 // worker.js (separate file!)
-const { parentPort } = require('worker_threads');
-parentPort.on('message', (x) => {
-  parentPort.postMessage(x * 2);
-});
+const { parentPort } = require('worker_threads')
+parentPort.on('message', x => {
+	parentPort.postMessage(x * 2)
+})
 
 // main.js
-const { Worker } = require('worker_threads');
-const worker = new Worker('./worker.js');
+const { Worker } = require('worker_threads')
+const worker = new Worker('./worker.js')
 
-worker.postMessage(21);
+worker.postMessage(21)
 
-worker.on('message', (result) => {
-  console.log(result); // 42
-});
+worker.on('message', result => {
+	console.log(result) // 42
+})
 
-worker.on('error', (err) => {
-  console.error('Worker error:', err);
-});
+worker.on('error', err => {
+	console.error('Worker error:', err)
+})
 
-worker.on('exit', (code) => {
-  if (code !== 0) {
-    console.error(`Worker stopped: ${code}`);
-  }
-});
+worker.on('exit', code => {
+	if (code !== 0) {
+		console.error(`Worker stopped: ${code}`)
+	}
+})
 
 // No pooling, no reuse, no caching...
 // 50+ lines of boilerplate
@@ -87,9 +81,9 @@ worker.on('exit', (code) => {
 <td>
 
 ```js
-const { bee } = require('bee-threads');
+const { bee } = require('bee-threads')
 
-const result = await bee((x) => x * 2)(21);
+const result = await bee(x => x * 2)(21)
 // 42
 
 // ✅ Worker pool (auto-managed)
@@ -113,14 +107,14 @@ const result = await bee((x) => x * 2)(21);
 
 ```js
 // Simple
-await bee(() => 42)();
+await bee(() => 42)()
 
 // With arguments
-await bee((a, b) => a + b)(10, 20);  // → 30
+await bee((a, b) => a + b)(10, 20) // → 30
 
 // External variables (closures)
-const TAX = 0.2;
-await bee((price) => price * (1 + TAX))(100, { beeClosures: { TAX } });  // → 120
+const TAX = 0.2
+await bee(price => price * (1 + TAX))(100, { beeClosures: { TAX } }) // → 120
 ```
 
 ---
@@ -130,63 +124,106 @@ await bee((price) => price * (1 + TAX))(100, { beeClosures: { TAX } });  // → 
 For more control, use `beeThreads`:
 
 ```js
-const { beeThreads } = require('bee-threads');
+const { beeThreads } = require('bee-threads')
 
 await beeThreads
-  .run((x) => x * 2)
-  .usingParams(21)
-  .execute();  // → 42
+	.run(x => x * 2)
+	.usingParams(21)
+	.execute() // → 42
 ```
 
 ### `.usingParams(...args)`
+
 Pass arguments to the function:
+
 ```js
-await beeThreads.run((a, b) => a + b).usingParams(10, 20).execute();  // → 30
+await beeThreads
+	.run((a, b) => a + b)
+	.usingParams(10, 20)
+	.execute() // → 30
 ```
 
 ### `.setContext({ vars })`
+
 Inject external variables (closures):
+
 ```js
-const TAX = 0.2;
-await beeThreads.run((p) => p * (1 + TAX)).usingParams(100).setContext({ TAX }).execute();  // → 120
+const TAX = 0.2
+await beeThreads
+	.run(p => p * (1 + TAX))
+	.usingParams(100)
+	.setContext({ TAX })
+	.execute() // → 120
 ```
 
 > **Note:** Context values must be serializable (no functions or Symbols).
 
 ### `.signal(AbortSignal)`
+
 Enable cancellation:
+
 ```js
-const ctrl = new AbortController();
-setTimeout(() => ctrl.abort(), 1000);
-await beeThreads.run(() => longTask()).signal(ctrl.signal).execute();
+const ctrl = new AbortController()
+setTimeout(() => ctrl.abort(), 1000)
+await beeThreads
+	.run(() => longTask())
+	.signal(ctrl.signal)
+	.execute()
 ```
 
 ### `.retry(options)`
+
 Auto-retry on failure:
+
 ```js
-await beeThreads.run(() => unstableApi()).retry({ maxAttempts: 3, baseDelay: 100 }).execute();
+await beeThreads
+	.run(() => unstableApi())
+	.retry({ maxAttempts: 3, baseDelay: 100 })
+	.execute()
 ```
 
 ### `.priority(level)`
+
 Queue priority (`'high'` | `'normal'` | `'low'`):
+
 ```js
-await beeThreads.run(() => critical()).priority('high').execute();
+await beeThreads
+	.run(() => critical())
+	.priority('high')
+	.execute()
 ```
 
 ### `.transfer([ArrayBuffer])`
+
 Zero-copy for large binary data:
+
 ```js
-const buf = new ArrayBuffer(1024);
-await beeThreads.run((b) => process(b)).usingParams(buf).transfer([buf]).execute();
+const buf = new ArrayBuffer(1024)
+await beeThreads
+	.run(b => process(b))
+	.usingParams(buf)
+	.transfer([buf])
+	.execute()
+```
+
+### `.noCoalesce()`
+
+Disable request coalescing for this specific execution:
+
+```js
+await beeThreads
+	.run(() => Date.now())
+	.noCoalesce()
+	.execute() // Always runs independently
 ```
 
 ### Timeout
 
 ```js
 await beeThreads
-  .withTimeout(5000)((data) => process(data))
-  .usingParams(data)
-  .execute();
+	.withTimeout(5000)(data => process(data))
+	.usingParams(data)
+	.execute()
 ```
 
 > **Note:** When using `.retry()` with `.withTimeout()`, the timeout applies **per attempt**, not total.
@@ -195,14 +232,14 @@ await beeThreads
 
 ```js
 const stream = beeThreads
-  .stream(function* (n) {
-    for (let i = 1; i <= n; i++) yield i * i;
-  })
-  .usingParams(5)
-  .execute();
+	.stream(function* (n) {
+		for (let i = 1; i <= n; i++) yield i * i
+	})
+	.usingParams(5)
+	.execute()
 
 for await (const value of stream) {
-  console.log(value);  // 1, 4, 9, 16, 25
+	console.log(value) // 1, 4, 9, 16, 25
 }
 ```
 
@@ -212,23 +249,54 @@ for await (const value of stream) {
 
 ```js
 beeThreads.configure({
-  poolSize: 8,              // Max workers (default: CPU cores)
-  minThreads: 2,            // Pre-warmed workers
-  maxQueueSize: 1000,       // Max pending tasks
-  workerIdleTimeout: 30000, // Cleanup idle workers (ms)
-  debugMode: true,          // Show function source in errors
-  logger: console,          // Custom logger (or null to disable)
-  lowMemoryMode: false,     // Reduce memory (~60-80% less)
-});
+	poolSize: 8, // Max workers (default: CPU cores)
+	minThreads: 2, // Pre-warmed workers
+	maxQueueSize: 1000, // Max pending tasks
+	workerIdleTimeout: 30000, // Cleanup idle workers (ms)
+	debugMode: true, // Show function source in errors
+	logger: console, // Custom logger (or null to disable)
+	lowMemoryMode: false, // Reduce memory (~60-80% less)
+	coalescing: true, // Enable request coalescing (default: true)
+})
 
 // Pre-warm workers
-await beeThreads.warmup(4);
+await beeThreads.warmup(4)
 
 // Metrics
-const stats = beeThreads.getPoolStats();
+const stats = beeThreads.getPoolStats()
 
 // Shutdown
-await beeThreads.shutdown();
+await beeThreads.shutdown()
+```
+
+### Request Coalescing
+
+Request coalescing (also known as "singleflight" or "promise deduplication") prevents duplicate simultaneous calls with the same parameters from running multiple times. When enabled, if the same function with the same arguments is called while a previous call is still in-flight, the subsequent calls will share the result of the first call.
+
+```js
+// Enable/disable coalescing (enabled by default)
+beeThreads.setCoalescing(true)
+
+// Check if enabled
+beeThreads.isCoalescingEnabled() // true
+
+// Get coalescing statistics
+const stats = beeThreads.getCoalescingStats()
+// { coalesced: 15, unique: 100, inFlight: 2, coalescingRate: '13.04%' }
+
+// Reset statistics
+beeThreads.resetCoalescingStats()
+```
+
+**Automatic Detection:** Functions containing non-deterministic patterns (`Date.now()`, `Math.random()`, `crypto.randomUUID()`, etc.) are automatically excluded from coalescing.
+
+**Manual Opt-out:** Use `.noCoalesce()` to exclude specific executions:
+
+```js
+await beeThreads
+	.run(() => fetchData())
+	.noCoalesce()
+	.execute()
 ```
 
 ---
@@ -236,19 +304,25 @@ await beeThreads.shutdown();
 ## Error Handling
 
 ```js
-const { TimeoutError, AbortError, QueueFullError, WorkerError } = require('bee-threads');
+const { TimeoutError, AbortError, QueueFullError, WorkerError } = require('bee-threads')
 
 try {
-  await beeThreads.run(fn).execute();
+	await beeThreads.run(fn).execute()
 } catch (err) {
-  if (err instanceof TimeoutError) { /* timeout */ }
-  if (err instanceof AbortError) { /* cancelled */ }
-  if (err instanceof QueueFullError) { /* queue full */ }
-  if (err instanceof WorkerError) { 
-    // Custom error properties are preserved
-    console.log(err.code);       // e.g., 'ERR_CUSTOM'
-    console.log(err.statusCode); // e.g., 500
-  }
+	if (err instanceof TimeoutError) {
+		/* timeout */
+	}
+	if (err instanceof AbortError) {
+		/* cancelled */
+	}
+	if (err instanceof QueueFullError) {
+		/* queue full */
+	}
+	if (err instanceof WorkerError) {
+		// Custom error properties are preserved
+		console.log(err.code) // e.g., 'ERR_CUSTOM'
+		console.log(err.statusCode) // e.g., 500
+	}
 }
 ```
 
@@ -259,56 +333,57 @@ try {
 Full type support:
 
 ```ts
-import { bee, beeThreads } from 'bee-threads';
+import { bee, beeThreads } from 'bee-threads'
 
-const result = await bee((x: number) => x * 2)(21);  // number
+const result = await bee((x: number) => x * 2)(21) // number
 ```
 
 ---
 
 ## Limitations
 
-- **No `this` binding** - Use arrow functions or pass context via `.setContext()`
-- **No closures** - External variables must be passed via `beeClosures` or `.setContext()`
-- **Serializable only** - Arguments and return values must be serializable (no functions, Symbols, or circular refs with classes)
+-  **No `this` binding** - Use arrow functions or pass context via `.setContext()`
+-  **No closures** - External variables must be passed via `beeClosures` or `.setContext()`
+-  **Serializable only** - Arguments and return values must be serializable (no functions, Symbols, or circular refs with classes)
 
 ### Worker Environment
 
 Some global APIs are **not available** inside worker functions:
 
-| API | Status |
-|-----|--------|
-| `require()` | ✅ Works |
-| `Buffer` | ✅ Works |
-| `URL`, `URLSearchParams` | ✅ Works |
-| `TextEncoder/Decoder` | ✅ Works |
-| `crypto` | ✅ Works |
-| `Intl` | ✅ Works |
-| `AbortController` | ❌ Use signal externally |
-| `structuredClone` | ❌ Not available |
-| `performance.now()` | ❌ Use `Date.now()` |
+| API                      | Status                   |
+| ------------------------ | ------------------------ |
+| `require()`              | ✅ Works                 |
+| `Buffer`                 | ✅ Works                 |
+| `URL`, `URLSearchParams` | ✅ Works                 |
+| `TextEncoder/Decoder`    | ✅ Works                 |
+| `crypto`                 | ✅ Works                 |
+| `Intl`                   | ✅ Works                 |
+| `AbortController`        | ❌ Use signal externally |
+| `structuredClone`        | ❌ Not available         |
+| `performance.now()`      | ❌ Use `Date.now()`      |
 
 ---
 
 ## Use Cases
 
-- Password hashing (PBKDF2, bcrypt)
-- Image processing (sharp, jimp)
-- Large JSON parsing
-- Data compression
-- PDF generation
-- Heavy computations
+-  Password hashing (PBKDF2, bcrypt)
+-  Image processing (sharp, jimp)
+-  Large JSON parsing
+-  Data compression
+-  PDF generation
+-  Heavy computations
 
 ---
 
 ## Why bee-threads?
 
-- **Zero dependencies** - Lightweight and secure
-- **Inline functions** - No separate worker files
-- **Worker pool** - Reuses threads, no cold-start
-- **Function caching** - LRU cache, 300-500x faster repeated calls
-- **Worker affinity** - Same function → same worker (V8 JIT optimization)
-- **Full TypeScript** - Complete type definitions
+-  **Zero dependencies** - Lightweight and secure
+-  **Inline functions** - No separate worker files
+-  **Worker pool** - Reuses threads, no cold-start
+-  **Function caching** - LRU cache, 300-500x faster repeated calls
+-  **Worker affinity** - Same function → same worker (V8 JIT optimization)
+-  **Request coalescing** - Deduplicates simultaneous identical calls
+-  **Full TypeScript** - Complete type definitions
 
 ---
 
