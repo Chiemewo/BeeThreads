@@ -202,20 +202,50 @@ Process large arrays across **ALL CPU cores** with **fail-fast** error handling.
 
 ```js
 // Map - transform each item in parallel
-const results = await beeThreads.turbo(x => Math.sqrt(x)).map(largeArray)
+const results = await beeThreads
+	.turbo((item, index) => {
+		// Each item processed by a different worker
+		return Math.sqrt(item) * Math.sin(item)
+	})
+	.map(largeArray)
 
 // TypedArray - uses SharedArrayBuffer (zero-copy!)
 const data = new Float64Array(1_000_000)
-const processed = await beeThreads.turbo(x => x * x).map(data)
+const processed = await beeThreads
+	.turbo((value, index) => {
+		// Heavy math on each element
+		return value * value + Math.log(value + 1)
+	})
+	.map(data)
 
 // Filter - parallel predicate evaluation
-const evens = await beeThreads.turbo(x => x % 2 === 0).filter(numbers)
+const evens = await beeThreads
+	.turbo((num, index) => {
+		return num % 2 === 0 // Returns true/false
+	})
+	.filter(numbers)
 
 // Reduce - parallel tree reduction
-const sum = await beeThreads.turbo((a, b) => a + b).reduce(numbers, 0)
+const sum = await beeThreads
+	.turbo((accumulator, currentValue) => {
+		return accumulator + currentValue
+	})
+	.reduce(numbers, 0)
+
+// With context variables
+const threshold = 100
+const filtered = await beeThreads
+	.turbo(
+		(item, index) => item > threshold,
+		{ context: { threshold } }
+	)
+	.filter(data)
 
 // With execution stats
-const { data, stats } = await beeThreads.turbo(x => heavyMath(x)).mapWithStats(array)
+const { data: results, stats } = await beeThreads
+	.turbo((x) => Math.sqrt(x) * Math.sin(x))
+	.mapWithStats(array)
+
 console.log(`Workers: ${stats.workersUsed}, Speedup: ${stats.speedupRatio}`)
 ```
 
