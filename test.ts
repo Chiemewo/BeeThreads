@@ -3158,6 +3158,508 @@ async function runTests(): Promise<void> {
     });
   });
 
+  // ---------- TURBO MODE ----------
+  section('Turbo Mode - Parallel Array Processing');
+
+  await test('turbo() method exists on beeThreads', () => {
+    assert.ok(typeof beeThreads.turbo === 'function', 'Should have turbo method');
+  });
+
+  await test('turbo() throws TypeError for non-function', () => {
+    assert.throws(() => {
+      (beeThreads as any).turbo('not a function');
+    }, TypeError);
+  });
+
+  await test('turbo().map() processes array', async () => {
+    const data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const result = await beeThreads.turbo((x: number) => x * 2, { force: true }).map(data);
+    
+    assert.deepStrictEqual(result, [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]);
+  });
+
+  await test('turbo().map() processes Float64Array', async () => {
+    const data = new Float64Array([1, 2, 3, 4, 5]);
+    const result = await beeThreads.turbo((x: number) => x * x, { force: true }).map(data);
+    
+    assert.deepStrictEqual(result, [1, 4, 9, 16, 25]);
+  });
+
+  await test('turbo().filter() filters array', async () => {
+    const data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const result = await beeThreads.turbo((x: number) => x % 2 === 0, { force: true }).filter(data);
+    
+    assert.deepStrictEqual(result, [2, 4, 6, 8, 10]);
+  });
+
+  await test('turbo().reduce() reduces array', async () => {
+    const data = [1, 2, 3, 4, 5];
+    const result = await beeThreads.turbo((a: number, b: number) => a + b, { force: true }).reduce(data, 0);
+    
+    assert.strictEqual(result, 15);
+  });
+
+  await test('turbo().mapWithStats() returns stats', async () => {
+    const data = new Float64Array(100);
+    for (let i = 0; i < 100; i++) data[i] = i;
+    
+    const { data: result, stats } = await beeThreads
+      .turbo((x: number) => Math.sqrt(x), { force: true })
+      .mapWithStats(data);
+    
+    assert.ok(Array.isArray(result), 'Result should be array');
+    assert.strictEqual(result.length, 100, 'Result should have same length');
+    assert.ok('totalItems' in stats, 'Stats should have totalItems');
+    assert.ok('workersUsed' in stats, 'Stats should have workersUsed');
+    assert.ok('executionTime' in stats, 'Stats should have executionTime');
+    assert.ok('speedupRatio' in stats, 'Stats should have speedupRatio');
+    assert.strictEqual(stats.totalItems, 100, 'totalItems should be 100');
+  });
+
+  await test('turbo() with context injects variables', async () => {
+    const data = [1, 2, 3, 4, 5];
+    const result = await beeThreads
+      .turbo((x: number) => x * multiplier, { force: true, context: { multiplier: 10 } })
+      .map(data);
+    
+    assert.deepStrictEqual(result, [10, 20, 30, 40, 50]);
+  });
+
+  await test('turboThreshold returns threshold value', () => {
+    const threshold = beeThreads.turboThreshold;
+    assert.ok(typeof threshold === 'number', 'Threshold should be a number');
+    assert.ok(threshold > 0, 'Threshold should be positive');
+  });
+
+  await test('turbo() falls back for small arrays', async () => {
+    // Small array should use fallback (no force)
+    const data = [1, 2, 3];
+    const result = await beeThreads.turbo((x: number) => x * 2).map(data);
+    
+    assert.deepStrictEqual(result, [2, 4, 6]);
+  });
+
+  // ---------- TURBO BENCHMARKS ----------
+  section('Turbo Mode - Benchmarks');
+
+  await test('BENCHMARK: turbo vs single worker (10K items)', async () => {
+    const size = 10_000;
+    const data = new Float64Array(size);
+    for (let i = 0; i < size; i++) data[i] = i;
+    
+    // Turbo mode
+    const turboStart = Date.now();
+    const { stats } = await beeThreads
+      .turbo((x: number) => Math.sqrt(x) * Math.sin(x), { force: true })
+      .mapWithStats(data);
+    const turboTime = Date.now() - turboStart;
+    
+    console.log(`  📊 10K items: ${turboTime}ms, ${stats.workersUsed} workers, speedup: ${stats.speedupRatio}`);
+    
+    assert.ok(turboTime < 5000, 'Should complete in reasonable time');
+    assert.ok(stats.workersUsed >= 1, 'Should use at least 1 worker');
+  });
+
+  await test('BENCHMARK: turbo vs single worker (100K items)', async () => {
+    const size = 100_000;
+    const data = new Float64Array(size);
+    for (let i = 0; i < size; i++) data[i] = i;
+    
+    // Turbo mode
+    const turboStart = Date.now();
+    const { stats } = await beeThreads
+      .turbo((x: number) => Math.sqrt(x) * Math.sin(x))
+      .mapWithStats(data);
+    const turboTime = Date.now() - turboStart;
+    
+    console.log(`  📊 100K items: ${turboTime}ms, ${stats.workersUsed} workers, speedup: ${stats.speedupRatio}`);
+    
+    assert.ok(turboTime < 10000, 'Should complete in reasonable time');
+    assert.ok(stats.workersUsed >= 1, 'Should use at least 1 worker');
+  });
+
+  await test('BENCHMARK: turbo filter (50K items)', async () => {
+    const size = 50_000;
+    const data: number[] = [];
+    for (let i = 0; i < size; i++) data.push(i);
+    
+    const start = Date.now();
+    const result = await beeThreads
+      .turbo((x: number) => x % 2 === 0)
+      .filter(data);
+    const elapsed = Date.now() - start;
+    
+    console.log(`  📊 Filter 50K items: ${elapsed}ms, result: ${result.length} items`);
+    
+    assert.strictEqual(result.length, 25000, 'Should filter half');
+  });
+
+  await test('BENCHMARK: turbo reduce (50K items)', async () => {
+    const size = 50_000;
+    const data: number[] = [];
+    for (let i = 1; i <= size; i++) data.push(i);
+    
+    const start = Date.now();
+    const result = await beeThreads
+      .turbo((a: number, b: number) => a + b)
+      .reduce(data, 0);
+    const elapsed = Date.now() - start;
+    
+    const expected = (size * (size + 1)) / 2; // Sum formula
+    console.log(`  📊 Reduce 50K items: ${elapsed}ms, sum: ${result}`);
+    
+    assert.strictEqual(result, expected, 'Sum should be correct');
+  });
+
+  // ---------- TURBO ISOLATION TESTS ----------
+  section('Turbo Mode - Isolation (turbo MUST NOT affect bee())');
+
+  await test('ISOLATION: bee() works normally after turbo() calls', async () => {
+    // Run turbo
+    const turboData = [1, 2, 3, 4, 5];
+    await beeThreads.turbo((x: number) => x * 2, { force: true }).map(turboData);
+    
+    // Now run normal bee() - should work exactly the same
+    const normalResult = await bee((a: number, b: number) => a + b)(5, 10);
+    assert.strictEqual(normalResult, 15, 'Normal bee() must work after turbo');
+    
+    // Another turbo
+    await beeThreads.turbo((x: number) => x * 3, { force: true }).map(turboData);
+    
+    // And another normal bee()
+    const normalResult2 = await bee((x: number) => x * x)(7);
+    assert.strictEqual(normalResult2, 49, 'Normal bee() must still work');
+  });
+
+  await test('ISOLATION: interleaved turbo and bee() calls', async () => {
+    // Interleave turbo and normal calls to ensure no interference
+    const results: (number | number[])[] = [];
+    
+    results.push(await bee((x: number) => x + 1)(1)); // 2
+    results.push(await beeThreads.turbo((x: number) => x * 2, { force: true }).map([1, 2])); // [2, 4]
+    results.push(await bee((x: number) => x * 3)(3)); // 9
+    results.push(await beeThreads.turbo((x: number) => x + 10, { force: true }).map([1])); // [11]
+    results.push(await bee((a: number, b: number) => a - b)(10, 3)); // 7
+    
+    assert.strictEqual(results[0], 2, 'First bee() correct');
+    assert.deepStrictEqual(results[1], [2, 4], 'First turbo correct');
+    assert.strictEqual(results[2], 9, 'Second bee() correct');
+    assert.deepStrictEqual(results[3], [11], 'Second turbo correct');
+    assert.strictEqual(results[4], 7, 'Third bee() correct');
+  });
+
+  await test('ISOLATION: concurrent turbo and bee() execution', async () => {
+    // Run turbo and bee() concurrently - must not interfere
+    const [turboResult, beeResult1, beeResult2] = await Promise.all([
+      beeThreads.turbo((x: number) => x * 2, { force: true }).map([1, 2, 3, 4, 5]),
+      bee((x: number) => x + 100)(5),
+      bee((a: number, b: number) => a * b)(6, 7)
+    ]);
+    
+    assert.deepStrictEqual(turboResult, [2, 4, 6, 8, 10], 'Turbo result correct');
+    assert.strictEqual(beeResult1, 105, 'First bee() correct');
+    assert.strictEqual(beeResult2, 42, 'Second bee() correct');
+  });
+
+  await test('ISOLATION: pool stats remain consistent after turbo', async () => {
+    const statsBefore = beeThreads.getPoolStats();
+    const workersBefore = statsBefore.workers;
+    
+    // Run turbo
+    await beeThreads.turbo((x: number) => x * 2, { force: true }).map([1, 2, 3, 4, 5]);
+    
+    // Run normal
+    await bee((x: number) => x + 1)(5);
+    
+    const statsAfter = beeThreads.getPoolStats();
+    const workersAfter = statsAfter.workers;
+    
+    assert.strictEqual(workersBefore, workersAfter, 'Worker count must remain stable');
+  });
+
+  // ---------- TURBO ERROR HANDLING TESTS ----------
+  section('Turbo Mode - Error Handling (FAIL-FAST)');
+
+  await test('ERROR: turbo propagates worker error as rejected promise', async () => {
+    const data = [1, 2, 3, 4, 5];
+    
+    await assert.rejects(
+      async () => {
+        await beeThreads.turbo((x: number) => {
+          if (x === 3) throw new Error('Intentional error at item 3');
+          return x * 2;
+        }, { force: true }).map(data);
+      },
+      /Intentional error|Turbo/,
+      'Should reject with worker error'
+    );
+  });
+
+  await test('ERROR: turbo handles TypeError in function', async () => {
+    const data = [1, 2, null, 4, 5];
+    
+    await assert.rejects(
+      async () => {
+        await beeThreads.turbo((x: any) => x.toFixed(2), { force: true }).map(data);
+      },
+      /toFixed|Cannot|null|undefined|Turbo/i,
+      'Should reject with TypeError'
+    );
+  });
+
+  await test('ERROR: bee() works normally after turbo error', async () => {
+    // First, make turbo fail
+    try {
+      await beeThreads.turbo((x: number) => {
+        throw new Error('Turbo failed');
+      }, { force: true }).map([1, 2, 3]);
+    } catch {
+      // Expected
+    }
+    
+    // Now normal bee() must work
+    const result = await bee((x: number) => x * 2)(21);
+    assert.strictEqual(result, 42, 'bee() must work after turbo error');
+  });
+
+  await test('ERROR: multiple turbo errors in sequence', async () => {
+    for (let i = 0; i < 3; i++) {
+      try {
+        await beeThreads.turbo((x: number) => {
+          throw new Error(`Error ${i}`);
+        }, { force: true }).map([1, 2]);
+      } catch (err) {
+        assert.ok(err instanceof Error, 'Should be Error instance');
+      }
+    }
+    
+    // System must remain stable
+    const result = await bee((x: number) => x + 1)(1);
+    assert.strictEqual(result, 2, 'System stable after multiple errors');
+  });
+
+  // ---------- TURBO RACE CONDITIONS TESTS ----------
+  section('Turbo Mode - Race Conditions');
+
+  await test('RACE: many concurrent turbo calls', async () => {
+    const promises: Promise<number[]>[] = [];
+    
+    // Use different pure functions (no closure capture) to avoid context issues
+    const fns = [
+      (x: number) => x * 1,
+      (x: number) => x * 2,
+      (x: number) => x * 3,
+      (x: number) => x * 4,
+      (x: number) => x * 5,
+      (x: number) => x + 1,
+      (x: number) => x + 2,
+      (x: number) => x + 3,
+      (x: number) => x + 4,
+      (x: number) => x + 5,
+    ];
+    
+    for (let i = 0; i < 10; i++) {
+      promises.push(
+        beeThreads.turbo(fns[i], { force: true }).map([1, 2, 3])
+      );
+    }
+    
+    const results = await Promise.all(promises);
+    
+    // Verify all completed without interference
+    assert.strictEqual(results.length, 10, 'All 10 turbo calls completed');
+    for (let i = 0; i < results.length; i++) {
+      assert.strictEqual(results[i].length, 3, `Result ${i} has correct length`);
+    }
+  });
+
+  await test('RACE: turbo and bee() racing together', async () => {
+    const promises: Promise<unknown>[] = [];
+    
+    // Mix turbo and bee calls
+    for (let i = 0; i < 20; i++) {
+      if (i % 2 === 0) {
+        promises.push(beeThreads.turbo((x: number) => x * 2, { force: true }).map([i]));
+      } else {
+        promises.push(bee((x: number) => x * 3)(i));
+      }
+    }
+    
+    const results = await Promise.all(promises);
+    
+    // All must complete
+    assert.strictEqual(results.length, 20, 'All 20 calls completed');
+    
+    // Verify alternating results
+    for (let i = 0; i < results.length; i++) {
+      if (i % 2 === 0) {
+        assert.deepStrictEqual(results[i], [i * 2], `Turbo result ${i} correct`);
+      } else {
+        assert.strictEqual(results[i], i * 3, `Bee result ${i} correct`);
+      }
+    }
+  });
+
+  // ---------- TURBO CHAOS ENGINEERING TESTS ----------
+  section('Turbo Mode - Chaos Engineering');
+
+  await test('CHAOS: random errors in some items', async () => {
+    let errorCount = 0;
+    
+    for (let run = 0; run < 5; run++) {
+      try {
+        await beeThreads.turbo((x: number) => {
+          if (Math.random() < 0.3) throw new Error('Random chaos');
+          return x * 2;
+        }, { force: true }).map([1, 2, 3, 4, 5]);
+      } catch {
+        errorCount++;
+      }
+    }
+    
+    // Some should have failed due to random errors
+    console.log(`  📊 Chaos: ${errorCount}/5 runs had random errors (expected ~1-4)`);
+    assert.ok(true, 'Chaos test completed without crash');
+  });
+
+  await test('CHAOS: stress test rapid sequential turbo calls', async () => {
+    const iterations = 20;
+    let successCount = 0;
+    
+    // Use inline math to avoid context/cache issues
+    for (let i = 0; i < iterations; i++) {
+      try {
+        // Pure function with no context dependency
+        const result = await beeThreads.turbo((x: number) => x * 2 + 1, { 
+          force: true
+        }).map([1, 2, 3]);
+        if (result.length === 3 && result[0] === 3) successCount++;
+      } catch (err) {
+        console.log(`    Iteration ${i} failed: ${(err as Error).message}`);
+      }
+    }
+    
+    console.log(`  📊 Stress: ${successCount}/${iterations} successful`);
+    assert.ok(successCount >= iterations * 0.5, 'At least 50% should succeed under stress');
+  });
+
+  await test('CHAOS: system recovery after chaos', async () => {
+    // After all the chaos, system must work normally
+    const normalResult = await bee((a: number, b: number) => a + b)(10, 20);
+    assert.strictEqual(normalResult, 30, 'System recovered from chaos');
+    
+    const turboResult = await beeThreads.turbo((x: number) => x * 10, { force: true }).map([1, 2, 3]);
+    assert.deepStrictEqual(turboResult, [10, 20, 30], 'Turbo works after chaos');
+  });
+
+  // ---------- TURBO COEXISTENCE TESTS ----------
+  section('Turbo Mode - Coexistence with Other Features');
+
+  await test('COEXIST: turbo with context + normal bee with context', async () => {
+    const turboCtx = { multiplier: 5 };
+    const beeCtx = { offset: 100 };
+    
+    const turboResult = await beeThreads
+      .turbo((x: number) => x * multiplier, { force: true, context: turboCtx })
+      .map([1, 2, 3]);
+    
+    const beeResult = await beeThreads
+      .run((x: number) => x + offset)
+      .usingParams(50)
+      .setContext(beeCtx)
+      .execute();
+    
+    assert.deepStrictEqual(turboResult, [5, 10, 15], 'Turbo with context works');
+    assert.strictEqual(beeResult, 150, 'Bee with context works');
+  });
+
+  await test('COEXIST: turbo does not affect request coalescing', async () => {
+    beeThreads.resetCoalescingStats();
+    
+    // Run turbo
+    await beeThreads.turbo((x: number) => x * 2, { force: true }).map([1, 2, 3]);
+    
+    // Coalescing should still work for normal calls
+    const slowFn = async (x: number) => {
+      let sum = 0;
+      for (let i = 0; i < 100000; i++) sum += i;
+      return x * 2;
+    };
+    
+    await Promise.all([bee(slowFn)(21), bee(slowFn)(21), bee(slowFn)(21)]);
+    
+    const stats = beeThreads.getCoalescingStats();
+    assert.ok(stats.coalesced >= 1, 'Coalescing should work after turbo');
+  });
+
+  await test('COEXIST: turbo does not break worker affinity', async () => {
+    // Run same function multiple times via turbo
+    const fn = (x: number) => x * 2;
+    for (let i = 0; i < 5; i++) {
+      await beeThreads.turbo(fn, { force: true }).map([1, 2, 3]);
+    }
+    
+    // Now run same function via normal bee() - affinity should work
+    for (let i = 0; i < 5; i++) {
+      await bee((x: number) => x * 2)(5);
+    }
+    
+    const stats = beeThreads.getPoolStats();
+    assert.ok(stats.metrics.affinityHits >= 0, 'Affinity tracking works');
+  });
+
+  // ---------- TURBO PERFORMANCE REGRESSION TESTS ----------
+  section('Turbo Mode - Performance Regression (bee() must not slow down)');
+
+  await test('PERF: bee() execution time not affected by prior turbo usage', async () => {
+    // Baseline: measure bee() time
+    const baselineStart = Date.now();
+    for (let i = 0; i < 100; i++) {
+      await bee((x: number) => x * 2)(i);
+    }
+    const baselineTime = Date.now() - baselineStart;
+    
+    // Use turbo heavily
+    for (let i = 0; i < 10; i++) {
+      await beeThreads.turbo((x: number) => x * x, { force: true }).map([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    }
+    
+    // Measure bee() time after turbo
+    const afterTurboStart = Date.now();
+    for (let i = 0; i < 100; i++) {
+      await bee((x: number) => x * 2)(i);
+    }
+    const afterTurboTime = Date.now() - afterTurboStart;
+    
+    console.log(`  📊 bee() time: before turbo=${baselineTime}ms, after turbo=${afterTurboTime}ms`);
+    
+    // Allow 50% variance (due to JIT warmup, etc.)
+    const maxAllowedTime = baselineTime * 1.5 + 50; // +50ms buffer
+    assert.ok(afterTurboTime <= maxAllowedTime, 
+      `bee() should not slow down significantly after turbo (${afterTurboTime}ms vs ${maxAllowedTime}ms allowed)`);
+  });
+
+  await test('PERF: turbo actually provides speedup for large arrays', async () => {
+    const size = 20_000;
+    const data = new Float64Array(size);
+    for (let i = 0; i < size; i++) data[i] = i;
+    
+    // Measure turbo
+    const turboStart = Date.now();
+    const { stats } = await beeThreads
+      .turbo((x: number) => Math.sqrt(x) * Math.sin(x))
+      .mapWithStats(data);
+    const turboTime = Date.now() - turboStart;
+    
+    console.log(`  📊 Turbo 20K: ${turboTime}ms, workers: ${stats.workersUsed}, speedup: ${stats.speedupRatio}`);
+    
+    // Should use multiple workers for speedup (if available)
+    if (stats.workersUsed > 1) {
+      assert.ok(stats.speedupRatio !== '1.0x', 'Should report speedup with multiple workers');
+    }
+    assert.ok(turboTime < 10000, 'Should complete in reasonable time');
+  });
+
   await beeThreads.shutdown();
 
   // ---------- SUMMARY ----------

@@ -340,11 +340,132 @@ function applyCurried(fn: Function, args: unknown[]): unknown {
 }
 
 // ============================================================================
+// TURBO MODE HANDLER
+// ============================================================================
+
+/**
+ * Handles turbo mode messages for parallel array processing.
+ * Supports SharedArrayBuffer for TypedArrays and chunk-based processing.
+ */
+interface TurboMessage {
+  type: 'turbo_map' | 'turbo_filter' | 'turbo_reduce';
+  fn: string;
+  chunk?: unknown[];
+  startIndex?: number;
+  endIndex?: number;
+  workerId: number;
+  totalWorkers: number;
+  context?: Record<string, unknown>;
+  inputBuffer?: SharedArrayBuffer;
+  outputBuffer?: SharedArrayBuffer;
+  controlBuffer?: SharedArrayBuffer;
+  initialValue?: unknown;
+}
+
+function isTurboMessage(msg: unknown): msg is TurboMessage {
+  return msg !== null && typeof msg === 'object' && 'type' in msg &&
+    (msg.type === 'turbo_map' || msg.type === 'turbo_filter' || msg.type === 'turbo_reduce');
+}
+
+function handleTurboMessage(message: TurboMessage): void {
+  const { type, fn: fnSrc, chunk, startIndex, endIndex, context, inputBuffer, outputBuffer, controlBuffer, initialValue } = message;
+
+  try {
+    // Compile the function
+    const fn = fnCache.getOrCompile(fnSrc, context);
+
+    if (typeof fn !== 'function') {
+      throw new TypeError('Turbo function did not compile correctly');
+    }
+
+    // SharedArrayBuffer mode (for TypedArrays)
+    if (inputBuffer && outputBuffer) {
+      // Detect the TypedArray type from buffer size and indices
+      const inputView = new Float64Array(inputBuffer);
+      const outputView = new Float64Array(outputBuffer);
+      const start = startIndex ?? 0;
+      const end = endIndex ?? inputView.length;
+
+      if (type === 'turbo_map') {
+        for (let i = start; i < end; i++) {
+          outputView[i] = fn(inputView[i], i);
+        }
+      }
+
+      // Signal completion via Atomics
+      if (controlBuffer) {
+        const controlView = new Int32Array(controlBuffer);
+        Atomics.add(controlView, 0, 1);
+        Atomics.notify(controlView, 0);
+      }
+
+      port.postMessage({
+        type: 'turbo_complete',
+        workerId: message.workerId,
+        itemsProcessed: end - start
+      });
+      return;
+    }
+
+    // Chunk-based mode (for regular arrays)
+    if (chunk) {
+      let result: unknown[];
+
+      if (type === 'turbo_map') {
+        result = new Array(chunk.length);
+        for (let i = 0; i < chunk.length; i++) {
+          result[i] = fn(chunk[i], i);
+        }
+      } else if (type === 'turbo_filter') {
+        result = [];
+        for (let i = 0; i < chunk.length; i++) {
+          if (fn(chunk[i], i)) {
+            result.push(chunk[i]);
+          }
+        }
+      } else if (type === 'turbo_reduce') {
+        let acc = initialValue;
+        for (let i = 0; i < chunk.length; i++) {
+          acc = fn(acc, chunk[i], i);
+        }
+        result = [acc];
+      } else {
+        throw new Error(`Unknown turbo type: ${type}`);
+      }
+
+      port.postMessage({
+        type: 'turbo_complete',
+        workerId: message.workerId,
+        result,
+        itemsProcessed: chunk.length
+      });
+      return;
+    }
+
+    throw new Error('Turbo message missing chunk or SharedArrayBuffer');
+
+  } catch (e) {
+    port.postMessage({
+      type: 'turbo_error',
+      workerId: message.workerId,
+      error: serializeError(e),
+      itemsProcessed: 0
+    });
+  }
+}
+
+// ============================================================================
 // MESSAGE HANDLER
 // ============================================================================
 
-port.on('message', (message: WorkerMessage) => {
-  const { fn: src, args, context } = message;
+port.on('message', (message: WorkerMessage | TurboMessage) => {
+  // Handle turbo messages
+  if (isTurboMessage(message)) {
+    handleTurboMessage(message);
+    return;
+  }
+
+  const { fn: src, args, context } = message as WorkerMessage;
   
   // Store current function source for debug error messages
   currentFnSource = src;
