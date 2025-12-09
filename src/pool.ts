@@ -23,7 +23,6 @@
 import { Worker } from 'worker_threads';
 import { SCRIPTS, config, pools, poolCounters, queues, metrics } from './config';
 import { QueueFullError } from './errors';
-import { fastHash } from './cache';
 import type {
   PoolType,
   Priority,

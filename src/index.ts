@@ -57,7 +57,7 @@ import {
   resetCoalescingStats,
   clearInFlightPromises
 } from './coalescing';
-import type { ConfigureOptions, FullPoolStats, PoolType, Priority, Logger } from './types';
+import type { ConfigureOptions, FullPoolStats } from './types';
 import type { CoalescingStats } from './coalescing';
 
 // ============================================================================
@@ -559,11 +559,13 @@ export type {
   Priority,
   PoolType,
   Logger,
-  CoalescingStats,
   SafeResult,
   SafeFulfilled,
   SafeRejected
 } from './types';
+
+// Re-export types from coalescing module
+export type { CoalescingStats } from './coalescing';
 
 // Re-export Runtime type
 export type { Runtime } from './config';
