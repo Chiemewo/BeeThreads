@@ -109,12 +109,14 @@ const NON_DETERMINISTIC_PATTERNS = [
 /**
  * Cache for non-deterministic function detection results.
  * Avoids re-checking the same function string multiple times.
+ * Uses a simple LRU-style eviction: when full, clears oldest half.
  */
 const nonDeterministicCache = new Map<string, boolean>();
+const MAX_NON_DETERMINISTIC_CACHE_SIZE = 500;
 
 /**
  * Checks if a function contains non-deterministic patterns.
- * Results are cached for performance.
+ * Results are cached for performance with automatic LRU-style cleanup.
  * 
  * @param fnString - Function source code
  * @returns true if function appears to be non-deterministic
@@ -135,10 +137,21 @@ export function isNonDeterministic(fnString: string): boolean {
     }
   }
   
-  // Cache result (limit cache size to prevent memory issues)
-  if (nonDeterministicCache.size < 1000) {
-    nonDeterministicCache.set(fnString, result);
+  // LRU-style eviction: when cache is full, remove oldest half
+  // Map maintains insertion order, so first entries are oldest
+  if (nonDeterministicCache.size >= MAX_NON_DETERMINISTIC_CACHE_SIZE) {
+    const keysToDelete = Math.floor(MAX_NON_DETERMINISTIC_CACHE_SIZE / 2);
+    const iterator = nonDeterministicCache.keys();
+    for (let i = 0; i < keysToDelete; i++) {
+      const key = iterator.next().value;
+      if (key !== undefined) {
+        nonDeterministicCache.delete(key);
+      }
+    }
   }
+  
+  // Cache result
+  nonDeterministicCache.set(fnString, result);
   
   return result;
 }
