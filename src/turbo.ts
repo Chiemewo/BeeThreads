@@ -872,6 +872,7 @@ export interface MaxOptions extends TurboOptions {
 }
 
 /**
+ * @experimental
  * Creates a TurboExecutor that includes the main thread in processing.
  * Uses ALL available CPU cores including the main thread.
  * 

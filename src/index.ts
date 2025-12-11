@@ -433,6 +433,7 @@ export const beeThreads = {
   },
 
   /**
+   * @experimental
    * Creates a MaxExecutor for maximum throughput parallel processing.
    * 
    * MAX MODE uses ALL CPU cores including the main thread for processing.

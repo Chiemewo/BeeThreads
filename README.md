@@ -27,9 +27,6 @@ const { bee } = require('bee-threads')
 // Run any function in a separate thread - promise style
 const result = await bee(x => x * 2)(21) // 42
 
-// Non-blocking CPU-intensive operations
-const hash = await bee(pwd => require('crypto').pbkdf2Sync(pwd, 'salt', 100000, 64, 'sha512').toString('hex'))('password123')
-
 // Run with Promise.all
 const [a, b, c] = await Promise.all([bee(x => x * 2)(21), bee(x => x + 1)(41), bee(() => 'hello')()])
 ```
@@ -286,32 +283,6 @@ const { data, stats } = await beeThreads.turbo(arr).mapWithStats(x => x * x)
 console.log(stats.speedupRatio) // "7.2x"
 ```
 
----
-
-## ⚡ Max Mode - One Task uses All Available Threads
-
-Uses **ALL threads including main thread** for maximum throughput. Same API as turbo, but ~15% faster.
-
-```js
-// Same API as turbo
-const squares = await beeThreads.max(numbers).map(x => x * x)
-const evens = await beeThreads.max(numbers).filter(x => x % 2 === 0)
-const sum = await beeThreads.max(numbers).reduce((a, b) => a + b, 0)
-```
-
-**Key difference:** Main thread processes data (blocking) while coordinating workers.
-
-| Feature | `turbo()` | `max()` |
-|---------|-----------|---------|
-| Main thread blocked | No | Yes |
-| Throughput | Good | Best (~15% faster) |
-| Use in HTTP servers | Yes | Depends |
-| Use in CLI/batch jobs | Yes | Best choice |
-
-> **Auto-fallback:** Arrays < 10K items use single-worker mode.
-
----
-
 ## Request Coalescing
 
 Prevents duplicate simultaneous calls from running multiple times. When the same function with identical arguments is called while a previous call is in-flight, subsequent calls share the same Promise.
@@ -468,10 +439,9 @@ const stream = beeThreads
 - **Large array processing** (turbo mode)
 - **Matrix operations** (turbo mode)
 - **Numerical simulations** (turbo mode)
-- **Batch processing servers** (max mode) - Dedicated processing servers
-- **Data pipelines** (max mode) - ETL, data transformation
-- **Video/image encoding services** (max mode) - Maximum throughput
-- **Scientific computing** (max mode) - CPU-intensive analysis
+- Data pipelines
+- Video/image encoding services
+- Scientific computing
 
 ---
 
@@ -484,7 +454,6 @@ const stream = beeThreads
 - **Worker affinity** - Same function → same worker (V8 JIT)
 - **Request coalescing** - Deduplicates identical calls
 - **Turbo mode** - Parallel array processing (workers only)
-- **Max mode** - Maximum throughput (workers + main thread)
 - **Full TypeScript** - Complete type definitions
 
 ---
