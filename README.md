@@ -27,9 +27,6 @@ const { bee } = require('bee-threads')
 // Run any function in a separate thread - promise style
 const result = await bee(x => x * 2)(21) // 42
 
-// Non-blocking CPU-intensive operations
-const hash = await bee(pwd => require('crypto').pbkdf2Sync(pwd, 'salt', 100000, 64, 'sha512').toString('hex'))('password123')
-
 // Run with Promise.all
 const [a, b, c] = await Promise.all([bee(x => x * 2)(21), bee(x => x + 1)(41), bee(() => 'hello')()])
 ```
@@ -290,6 +287,8 @@ for await (const chunk of stream) {
 
 Process large arrays across **ALL CPU cores** with **fail-fast** error handling.
 
+> ✅ **Async (Non-blocking):** Main thread stays free for handling requests/events
+
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
 │  beeThreads.turbo([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]).map(fn)   │
@@ -342,47 +341,6 @@ await beeThreads.turbo(data, { context: { factor } }).map(x => x * factor)
 const { data, stats } = await beeThreads.turbo(arr).mapWithStats(x => x * x)
 console.log(stats.speedupRatio) // "7.2x"
 ```
-
-### Image & Video Processing
-
-```js
-// 🖼️ Image: Grayscale conversion (1920x1080 = 2M pixels)
-const imageBuffer = new Uint8Array(rawPixelData)
-const grayscale = await beeThreads.turbo(imageBuffer).map(v => Math.round(v * 0.299)) // Simplified grayscale
-
-// 🎬 Video: Process frames with generator (memory efficient)
-const stream = beeThreads
-	.stream(function* (videoPath) {
-		const decoder = createVideoDecoder(videoPath)
-		for (const frame of decoder) {
-			yield processFrame(frame) // Yields each frame as processed
-		}
-	})
-	.usingParams('video.mp4')
-	.execute()
-
-for await (const processedFrame of stream) {
-	writeFrame(processedFrame) // Stream to output without loading all in memory
-}
-
-// 🔥 Batch process video frames with turbo
-const frames = extractFrames('video.mp4') // Array of Uint8Array
-const processed = await Promise.all(frames.map(frame => beeThreads.turbo(frame).map(px => px * 1.2)))
-```
-
-### When to Use
-
-| Scenario                | Best Choice          | Why                                   |
-| ----------------------- | -------------------- | ------------------------------------- |
-| Single heavy task       | `bee()`              | Simple, one worker                    |
-| Batch processing (10K+) | `turbo()`            | Parallel across all cores             |
-| TypedArray / Image      | `turbo()`            | SharedArrayBuffer, zero-copy          |
-| Video / Large files     | `stream()`           | Memory efficient, yields as processed |
-| Real-time processing    | `bee()` + `stream()` | Combine for best of both              |
-
-> **Auto-fallback:** `turbo()` with < 10K items automatically uses single-worker mode.
-
----
 
 ## Request Coalescing
 
@@ -530,28 +488,31 @@ const stream = beeThreads
 
 ## Use Cases
 
--  Password hashing (PBKDF2, bcrypt)
--  Image processing (sharp, jimp)
--  Large JSON parsing
--  Data compression
--  PDF generation
--  Heavy computations
--  **Large array processing** (turbo mode)
--  **Matrix operations** (turbo mode)
--  **Numerical simulations** (turbo mode)
+- Password hashing (PBKDF2, bcrypt)
+- Image processing (sharp, jimp)
+- Large JSON parsing
+- Data compression
+- PDF generation
+- Heavy computations
+- **Large array processing** (turbo mode)
+- **Matrix operations** (turbo mode)
+- **Numerical simulations** (turbo mode)
+- Data pipelines
+- Video/image encoding services
+- Scientific computing
 
 ---
 
 ## Why bee-threads?
 
--  **Zero dependencies** - Lightweight and secure
--  **Inline functions** - No separate worker files
--  **Worker pool** - Reuses threads, no cold-start
--  **Function caching** - LRU cache, 300-500x faster
--  **Worker affinity** - Same function → same worker (V8 JIT)
--  **Request coalescing** - Deduplicates identical calls
--  **Turbo mode** - Parallel array processing
--  **Full TypeScript** - Complete type definitions
+- **Zero dependencies** - Lightweight and secure
+- **Inline functions** - No separate worker files
+- **Worker pool** - Reuses threads, no cold-start
+- **Function caching** - LRU cache, 300-500x faster
+- **Worker affinity** - Same function → same worker (V8 JIT)
+- **Request coalescing** - Deduplicates identical calls
+- **Turbo mode** - Parallel array processing (workers only)
+- **Full TypeScript** - Complete type definitions
 
 ---
 

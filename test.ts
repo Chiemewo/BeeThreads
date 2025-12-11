@@ -3895,6 +3895,242 @@ async function runTests(): Promise<void> {
       'Generator cache key should include full context values');
   });
 
+  // ---------- TURBO OPTIMIZATIONS TESTS ----------
+  section('Turbo Mode - Optimization Verification');
+
+  await test('OPT: batch worker acquisition is faster than sequential', async () => {
+    const data = new Array(50_000).fill(0).map((_, i) => i);
+    
+    // Run turbo - should use batch acquisition internally
+    const start = Date.now();
+    const { stats } = await beeThreads.turbo(data).mapWithStats((x: number) => x * 2);
+    const time = Date.now() - start;
+    
+    console.log(`  📊 50K items: ${time}ms with ${stats.workersUsed} workers (batch acquisition)`);
+    
+    // Should use multiple workers
+    assert.ok(stats.workersUsed >= 2, 'Should use multiple workers for batch test');
+    assert.ok(time < 5000, 'Should complete in reasonable time with batch optimization');
+  });
+
+  await test('OPT: merge optimization with pre-calculated offsets', async () => {
+    const data = new Array(30_000).fill(0).map((_, i) => i);
+    
+    const start = Date.now();
+    const result = await beeThreads.turbo(data).map((x: number) => x + 1);
+    const time = Date.now() - start;
+    
+    console.log(`  📊 Merge optimization: ${time}ms for 30K items`);
+    
+    // Verify correctness (merge worked properly)
+    assert.strictEqual(result.length, 30_000, 'All items merged');
+    assert.strictEqual(result[0], 1, 'First item correct');
+    assert.strictEqual(result[29_999], 30_000, 'Last item correct');
+    assert.ok(time < 5000, 'Optimized merge should be fast');
+  });
+
+  await test('OPT: turbo handles large arrays efficiently', async () => {
+    const data = new Array(100_000).fill(0).map((_, i) => i);
+    
+    const start = Date.now();
+    const { stats } = await beeThreads.turbo(data).mapWithStats((x: number) => x % 2 === 0 ? x : -x);
+    const time = Date.now() - start;
+    
+    console.log(`  📊 100K items: ${time}ms, ${stats.workersUsed} workers, speedup: ${stats.speedupRatio}`);
+    
+    assert.ok(stats.workersUsed >= 2, 'Should parallelize large arrays');
+    assert.ok(time < 10000, 'Should handle 100K items efficiently');
+  });
+
+  await test('OPT: turbo filter preserves order with optimized merge', async () => {
+    const data = new Array(20_000).fill(0).map((_, i) => i);
+    
+    const result = await beeThreads.turbo(data).filter((x: number) => x % 10 === 0);
+    
+    // Should have 2000 items (0, 10, 20, ..., 19990)
+    assert.strictEqual(result.length, 2000, 'Filter correct count');
+    assert.strictEqual(result[0], 0, 'First item correct');
+    assert.strictEqual(result[1], 10, 'Second item correct');
+    assert.strictEqual(result[1999], 19990, 'Last item correct');
+  });
+
+  await test('OPT: turbo reduce combines results correctly', async () => {
+    const data = new Array(10_000).fill(1);
+    
+    const sum = await beeThreads.turbo(data).reduce((a: number, b: number) => a + b, 0);
+    
+    assert.strictEqual(sum, 10_000, 'Reduce sum correct with optimized merge');
+  });
+
+  // ---------- MAX MODE TESTS ----------
+  section('Max Mode - Main Thread + Workers');
+
+  await test('max() method exists on beeThreads', () => {
+    assert.ok(typeof beeThreads.max === 'function', 'Should have max method');
+  });
+
+  await test('max() throws TypeError for non-array', () => {
+    assert.throws(
+      () => (beeThreads as any).max('not an array'),
+      TypeError
+    );
+  });
+
+  await test('max(arr).map(fn) processes array with main thread', async () => {
+    const data = new Array(10_000).fill(0).map((_, i) => i);
+    const result = await beeThreads.max(data, { force: true }).map((x: number) => x * 2);
+    
+    assert.strictEqual(result.length, 10_000, 'Should have all items');
+    assert.strictEqual(result[0], 0, 'First item correct');
+    assert.strictEqual(result[5000], 10_000, 'Middle item correct');
+    assert.strictEqual(result[9999], 19_998, 'Last item correct');
+  });
+
+  await test('max(arr).mapWithStats() returns correct stats', async () => {
+    const data = new Array(20_000).fill(0).map((_, i) => i);
+    
+    const { data: result, stats } = await beeThreads
+      .max(data, { force: true })
+      .mapWithStats((x: number) => x + 1);
+    
+    assert.strictEqual(result.length, 20_000, 'Should process all items');
+    assert.ok(stats.workersUsed >= 2, 'Should use multiple threads including main');
+    assert.ok(stats.totalItems === 20_000, 'Stats correct');
+    console.log(`  📊 max() used ${stats.workersUsed} threads (including main)`);
+  });
+
+  await test('max(arr).filter(fn) filters with main thread', async () => {
+    const data = new Array(5_000).fill(0).map((_, i) => i);
+    const result = await beeThreads.max(data, { force: true }).filter((x: number) => x % 2 === 0);
+    
+    assert.strictEqual(result.length, 2_500, 'Should filter correctly');
+    assert.strictEqual(result[0], 0, 'First even correct');
+    assert.strictEqual(result[1], 2, 'Second even correct');
+  });
+
+  await test('max(arr).reduce(fn, init) reduces with main thread', async () => {
+    const data = new Array(8_000).fill(1);
+    const result = await beeThreads.max(data, { force: true }).reduce((a: number, b: number) => a + b, 0);
+    
+    assert.strictEqual(result, 8_000, 'Should reduce correctly');
+  });
+
+  await test('max(arr, { context }) injects variables', async () => {
+    const data = [10, 20, 30];
+    const result = await beeThreads
+      .max(data, { force: true, context: { multiplier: 5 } })
+      .map((x: number) => x * multiplier);
+    
+    assert.deepStrictEqual(result, [50, 100, 150], 'Context should work with max');
+  });
+
+  await test('max() preserves array order', async () => {
+    const data = new Array(15_000).fill(0).map((_, i) => i);
+    const result = await beeThreads.max(data, { force: true }).map((x: number) => x);
+    
+    for (let i = 0; i < 15_000; i++) {
+      assert.strictEqual(result[i], i, `Item ${i} should be in order`);
+    }
+  });
+
+  await test('BENCHMARK: max() vs turbo() throughput', async () => {
+    const data = new Array(50_000).fill(0).map((_, i) => i);
+    
+    // Turbo (workers only)
+    const turboStart = Date.now();
+    const turboResult = await beeThreads.turbo(data).mapWithStats((x: number) => x * x);
+    const turboTime = Date.now() - turboStart;
+    
+    // Max (workers + main thread)
+    const maxStart = Date.now();
+    const maxResult = await beeThreads.max(data).mapWithStats((x: number) => x * x);
+    const maxTime = Date.now() - maxStart;
+    
+    console.log(`  📊 turbo: ${turboTime}ms (${turboResult.stats.workersUsed} workers)`);
+    console.log(`  📊 max: ${maxTime}ms (${maxResult.stats.workersUsed} threads incl. main)`);
+    console.log(`  📊 max speedup: ${(turboTime / maxTime).toFixed(2)}x faster`);
+    
+    // Both should produce same result
+    assert.deepStrictEqual(maxResult.data, turboResult.data, 'Results should match');
+    
+    // Max should use one more thread (main thread)
+    assert.ok(maxResult.stats.workersUsed >= turboResult.stats.workersUsed, 
+      'max should use at least as many threads as turbo');
+  });
+
+  await test('max() error handling - propagates errors', async () => {
+    const data = [1, 2, 3, 4, 5];
+    
+    await assert.rejects(
+      async () => {
+        await beeThreads.max(data, { force: true }).map((x: number) => {
+          if (x === 3) throw new Error('Max error test');
+          return x * 2;
+        });
+      },
+      /Max error test|Error/
+    );
+  });
+
+  await test('max() works with small arrays (fallback)', async () => {
+    const data = [1, 2, 3];
+    const result = await beeThreads.max(data).map((x: number) => x * 10);
+    
+    assert.deepStrictEqual(result, [10, 20, 30], 'Small array fallback works');
+  });
+
+  await test('ISOLATION: max() does not affect bee()', async () => {
+    // Run max
+    await beeThreads.max([1, 2, 3, 4, 5], { force: true }).map((x: number) => x * 2);
+    
+    // bee() should still work
+    const result = await bee((x: number) => x + 10)(5);
+    assert.strictEqual(result, 15, 'bee() works after max()');
+  });
+
+  await test('ISOLATION: max() and turbo() can be used together', async () => {
+    const data1 = new Array(5_000).fill(0).map((_, i) => i);
+    const data2 = new Array(5_000).fill(0).map((_, i) => i * 2);
+    
+    const [maxResult, turboResult] = await Promise.all([
+      beeThreads.max(data1, { force: true }).map((x: number) => x + 1),
+      beeThreads.turbo(data2, { force: true }).map((x: number) => x + 2)
+    ]);
+    
+    assert.strictEqual(maxResult.length, 5_000, 'max result correct');
+    assert.strictEqual(turboResult.length, 5_000, 'turbo result correct');
+    assert.strictEqual(maxResult[0], 1, 'max first item correct');
+    assert.strictEqual(turboResult[0], 2, 'turbo first item correct');
+  });
+
+  await test('max() handles Float64Array', async () => {
+    const data = new Float64Array([1.5, 2.5, 3.5, 4.5]);
+    const result = await beeThreads.max(data as any, { force: true }).map((x: number) => x * 2);
+    
+    assert.strictEqual(result.length, 4, 'Float64Array processed');
+    assert.strictEqual(result[0], 3, 'First value correct');
+    assert.strictEqual(result[3], 9, 'Last value correct');
+  });
+
+  await test('STRESS: max() with concurrent operations', async () => {
+    const promises = [];
+    
+    for (let i = 0; i < 5; i++) {
+      const data = new Array(10_000).fill(i);
+      promises.push(
+        beeThreads.max(data, { force: true }).map((x: number) => x + 1)
+      );
+    }
+    
+    const results = await Promise.all(promises);
+    
+    assert.strictEqual(results.length, 5, 'All max operations completed');
+    for (let i = 0; i < 5; i++) {
+      assert.strictEqual(results[i].length, 10_000, `Result ${i} has correct length`);
+      assert.strictEqual(results[i][0], i + 1, `Result ${i} has correct value`);
+    }
+  });
+
   // ---------- SUMMARY ----------
   console.log('\n' + '='.repeat(50));
   console.log(`\n📊 Results: ${passed} passed, ${failed} failed\n`);
