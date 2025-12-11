@@ -134,7 +134,10 @@ await beeThreads
 ### `.usingParams(...args)`
 
 ```js
-await beeThreads.run((a, b) => a + b).usingParams(10, 20).execute() // → 30
+await beeThreads
+	.run((a, b) => a + b)
+	.usingParams(10, 20)
+	.execute() // → 30
 ```
 
 ### `.setContext({ vars })`
@@ -143,7 +146,11 @@ Inject external variables (closures):
 
 ```js
 const TAX = 0.2
-await beeThreads.run(p => p * (1 + TAX)).usingParams(100).setContext({ TAX }).execute() // → 120
+await beeThreads
+	.run(p => p * (1 + TAX))
+	.usingParams(100)
+	.setContext({ TAX })
+	.execute() // → 120
 ```
 
 ### `.signal(AbortSignal)` - Cancellation
@@ -155,13 +162,13 @@ const controller = new AbortController()
 
 // Start a heavy computation
 const promise = beeThreads
-  .run(() => {
-    let sum = 0
-    for (let i = 0; i < 1e10; i++) sum += i
-    return sum
-  })
-  .signal(controller.signal)
-  .execute()
+	.run(() => {
+		let sum = 0
+		for (let i = 0; i < 1e10; i++) sum += i
+		return sum
+	})
+	.signal(controller.signal)
+	.execute()
 
 // User clicks "Cancel" button
 cancelButton.onclick = () => controller.abort()
@@ -173,14 +180,14 @@ Retry failed tasks with exponential backoff:
 
 ```js
 const data = await beeThreads
-  .run(() => fetchFromFlakyAPI())
-  .retry({
-    maxAttempts: 5,    // Try up to 5 times
-    baseDelay: 100,    // Start with 100ms delay
-    maxDelay: 5000,    // Cap at 5 seconds
-    backoffFactor: 2   // Double delay each retry: 100 → 200 → 400 → 800...
-  })
-  .execute()
+	.run(() => fetchFromFlakyAPI())
+	.retry({
+		maxAttempts: 5, // Try up to 5 times
+		baseDelay: 100, // Start with 100ms delay
+		maxDelay: 5000, // Cap at 5 seconds
+		backoffFactor: 2, // Double delay each retry: 100 → 200 → 400 → 800...
+	})
+	.execute()
 ```
 
 ### `.priority('high' | 'normal' | 'low')`
@@ -189,10 +196,16 @@ Control execution order when workers are busy:
 
 ```js
 // Payment processing - jump the queue
-await beeThreads.run(() => processPayment()).priority('high').execute()
+await beeThreads
+	.run(() => processPayment())
+	.priority('high')
+	.execute()
 
 // Report generation - can wait
-await beeThreads.run(() => generateReport()).priority('low').execute()
+await beeThreads
+	.run(() => generateReport())
+	.priority('low')
+	.execute()
 ```
 
 ### `.transfer([...buffers])` - Zero-copy Transfer
@@ -204,10 +217,10 @@ Move large binary data to worker without copying:
 const imageBuffer = new ArrayBuffer(10 * 1024 * 1024)
 
 await beeThreads
-  .run(buf => processImage(buf))
-  .usingParams(imageBuffer)
-  .transfer([imageBuffer])
-  .execute()
+	.run(buf => processImage(buf))
+	.usingParams(imageBuffer)
+	.transfer([imageBuffer.buffer])
+	.execute()
 
 // Note: imageBuffer is now empty (ownership moved to worker)
 ```
@@ -218,11 +231,57 @@ const mask = new Uint8Array(maskData)
 const options = { width: 800, quality: 90 }
 
 await beeThreads
-  .run((img, msk, opts) => processImage(img, msk, opts, SHARP_OPTIONS))
-  .usingParams(image, mask, options)
-  .setContext({ SHARP_OPTIONS: { fit: 'cover' } })
-  .transfer([image.buffer, mask.buffer])
-  .execute()
+	.run((img, msk, opts) => processImage(img, msk, opts, SHARP_OPTIONS))
+	.usingParams(image, mask, options)
+	.setContext({ SHARP_OPTIONS: { fit: 'cover' } })
+	.transfer([image.buffer, mask.buffer])
+	.execute()
+```
+
+### `.reconstructBuffers()` - Buffer Reconstruction
+
+When using libraries like **Sharp**, **fs**, or **crypto** that return `Buffer`, the result gets converted to `Uint8Array` by `postMessage`. Use `.reconstructBuffers()` to convert them back:
+
+```js
+// Without reconstructBuffers() - returns Uint8Array
+const uint8 = await beeThreads.run(() => require('fs').readFileSync('file.txt')).execute()
+console.log(Buffer.isBuffer(uint8)) // false (Uint8Array)
+
+// With reconstructBuffers() - returns Buffer
+const buffer = await beeThreads
+	.run(() => require('fs').readFileSync('file.txt'))
+	.reconstructBuffers()
+	.execute()
+console.log(Buffer.isBuffer(buffer)) // true ✅
+```
+
+Works with **Sharp** for image processing:
+
+```js
+const resized = await beeThreads
+	.run(img => require('sharp')(img).resize(100, 100).toBuffer())
+	.usingParams(imageBuffer)
+	.transfer([imageBuffer.buffer])
+	.reconstructBuffers()
+	.execute()
+
+console.log(Buffer.isBuffer(resized)) // true ✅
+```
+
+Also works with **generators**:
+
+```js
+const stream = beeThreads
+	.stream(function* () {
+		yield require('fs').readFileSync('chunk1.bin')
+		yield require('fs').readFileSync('chunk2.bin')
+	})
+	.reconstructBuffers()
+	.execute()
+
+for await (const chunk of stream) {
+	console.log(Buffer.isBuffer(chunk)) // true ✅
+}
 ```
 
 ---
@@ -289,17 +348,18 @@ console.log(stats.speedupRatio) // "7.2x"
 ```js
 // 🖼️ Image: Grayscale conversion (1920x1080 = 2M pixels)
 const imageBuffer = new Uint8Array(rawPixelData)
-const grayscale = await beeThreads
-	.turbo(imageBuffer)
-	.map(v => Math.round(v * 0.299)) // Simplified grayscale
+const grayscale = await beeThreads.turbo(imageBuffer).map(v => Math.round(v * 0.299)) // Simplified grayscale
 
 // 🎬 Video: Process frames with generator (memory efficient)
-const stream = beeThreads.stream(function* (videoPath) {
-	const decoder = createVideoDecoder(videoPath)
-	for (const frame of decoder) {
-		yield processFrame(frame) // Yields each frame as processed
-	}
-}).usingParams('video.mp4').execute()
+const stream = beeThreads
+	.stream(function* (videoPath) {
+		const decoder = createVideoDecoder(videoPath)
+		for (const frame of decoder) {
+			yield processFrame(frame) // Yields each frame as processed
+		}
+	})
+	.usingParams('video.mp4')
+	.execute()
 
 for await (const processedFrame of stream) {
 	writeFrame(processedFrame) // Stream to output without loading all in memory
@@ -307,20 +367,18 @@ for await (const processedFrame of stream) {
 
 // 🔥 Batch process video frames with turbo
 const frames = extractFrames('video.mp4') // Array of Uint8Array
-const processed = await Promise.all(
-	frames.map(frame => beeThreads.turbo(frame).map(px => px * 1.2))
-)
+const processed = await Promise.all(frames.map(frame => beeThreads.turbo(frame).map(px => px * 1.2)))
 ```
 
 ### When to Use
 
-| Scenario | Best Choice | Why |
-| -------- | ----------- | --- |
-| Single heavy task | `bee()` | Simple, one worker |
-| Batch processing (10K+) | `turbo()` | Parallel across all cores |
-| TypedArray / Image | `turbo()` | SharedArrayBuffer, zero-copy |
-| Video / Large files | `stream()` | Memory efficient, yields as processed |
-| Real-time processing | `bee()` + `stream()` | Combine for best of both |
+| Scenario                | Best Choice          | Why                                   |
+| ----------------------- | -------------------- | ------------------------------------- |
+| Single heavy task       | `bee()`              | Simple, one worker                    |
+| Batch processing (10K+) | `turbo()`            | Parallel across all cores             |
+| TypedArray / Image      | `turbo()`            | SharedArrayBuffer, zero-copy          |
+| Video / Large files     | `stream()`           | Memory efficient, yields as processed |
+| Real-time processing    | `bee()` + `stream()` | Combine for best of both              |
 
 > **Auto-fallback:** `turbo()` with < 10K items automatically uses single-worker mode.
 
@@ -332,18 +390,17 @@ Prevents duplicate simultaneous calls from running multiple times. When the same
 
 ```js
 // All 3 calls share ONE execution, return same result
-const [r1, r2, r3] = await Promise.all([
-	bee(x => expensiveComputation(x))(42),
-	bee(x => expensiveComputation(x))(42),
-	bee(x => expensiveComputation(x))(42),
-])
+const [r1, r2, r3] = await Promise.all([bee(x => expensiveComputation(x))(42), bee(x => expensiveComputation(x))(42), bee(x => expensiveComputation(x))(42)])
 
 // Control coalescing
 beeThreads.setCoalescing(false) // disable globally
 beeThreads.getCoalescingStats() // { coalesced: 15, unique: 100, coalescingRate: '13%' }
 
 // Opt-out for specific execution
-await beeThreads.run(() => Date.now()).noCoalesce().execute()
+await beeThreads
+	.run(() => Date.now())
+	.noCoalesce()
+	.execute()
 ```
 
 **Auto-detection:** Functions with `Date.now()`, `Math.random()`, `crypto.randomUUID()` are automatically excluded.
@@ -449,9 +506,9 @@ const stream = beeThreads
 
 ## Limitations
 
-- **No `this` binding** - Use arrow functions or `.setContext()`
-- **No closures** - External vars via `beeClosures` or `.setContext()`
-- **Serializable only** - No functions, Symbols, or circular refs in args/return
+-  **No `this` binding** - Use arrow functions or `.setContext()`
+-  **No closures** - External vars via `beeClosures` or `.setContext()`
+-  **Serializable only** - No functions, Symbols, or circular refs in args/return
 
 ---
 
@@ -473,28 +530,28 @@ const stream = beeThreads
 
 ## Use Cases
 
-- Password hashing (PBKDF2, bcrypt)
-- Image processing (sharp, jimp)
-- Large JSON parsing
-- Data compression
-- PDF generation
-- Heavy computations
-- **Large array processing** (turbo mode)
-- **Matrix operations** (turbo mode)
-- **Numerical simulations** (turbo mode)
+-  Password hashing (PBKDF2, bcrypt)
+-  Image processing (sharp, jimp)
+-  Large JSON parsing
+-  Data compression
+-  PDF generation
+-  Heavy computations
+-  **Large array processing** (turbo mode)
+-  **Matrix operations** (turbo mode)
+-  **Numerical simulations** (turbo mode)
 
 ---
 
 ## Why bee-threads?
 
-- **Zero dependencies** - Lightweight and secure
-- **Inline functions** - No separate worker files
-- **Worker pool** - Reuses threads, no cold-start
-- **Function caching** - LRU cache, 300-500x faster
-- **Worker affinity** - Same function → same worker (V8 JIT)
-- **Request coalescing** - Deduplicates identical calls
-- **Turbo mode** - Parallel array processing
-- **Full TypeScript** - Complete type definitions
+-  **Zero dependencies** - Lightweight and secure
+-  **Inline functions** - No separate worker files
+-  **Worker pool** - Reuses threads, no cold-start
+-  **Function caching** - LRU cache, 300-500x faster
+-  **Worker affinity** - Same function → same worker (V8 JIT)
+-  **Request coalescing** - Deduplicates identical calls
+-  **Turbo mode** - Parallel array processing
+-  **Full TypeScript** - Complete type definitions
 
 ---
 
