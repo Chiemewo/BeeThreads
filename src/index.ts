@@ -59,11 +59,12 @@ import {
 } from './coalescing';
 import {
   createTurboExecutor,
+  createMaxExecutor,
   TURBO_THRESHOLD
 } from './turbo';
 import type { ConfigureOptions, FullPoolStats } from './types';
 import type { CoalescingStats } from './coalescing';
-import type { TurboExecutor, TurboOptions } from './turbo';
+import type { TurboExecutor, TurboOptions, MaxOptions } from './turbo';
 
 // ============================================================================
 // SIMPLE CURRIED API
@@ -432,6 +433,69 @@ export const beeThreads = {
   },
 
   /**
+   * Creates a MaxExecutor for maximum throughput parallel processing.
+   * 
+   * MAX MODE uses ALL CPU cores including the main thread for processing.
+   * This provides the absolute maximum throughput at the cost of blocking
+   * the main thread during execution.
+   * 
+   * ## When to Use
+   * 
+   * | Feature | `turbo()` | `max()` |
+   * |---------|-----------|---------|
+   * | Blocks main thread | ❌ | ✅ |
+   * | Max throughput | Good | **Best** |
+   * | HTTP server safe | ✅ | ❌ |
+   * | CLI scripts | ✅ | ✅✅✅ |
+   * | Batch jobs | ✅ | ✅✅✅ |
+   * 
+   * ## Performance
+   * 
+   * On 8-core CPU:
+   * - `turbo()`: Uses 7 worker threads (main thread free)
+   * - `max()`: Uses 7 workers + main thread = **8 cores total**
+   * 
+   * Expected speedup: ~10-15% faster than turbo()
+   * 
+   * ⚠️ WARNING: Do NOT use in HTTP servers or event-driven apps!
+   * The main thread will be blocked and cannot respond to requests.
+   * 
+   * @param data - Array or TypedArray to process
+   * @param options - Max execution options (same as turbo)
+   * @returns TurboExecutor with map, filter, reduce methods
+   * 
+   * @example
+   * ```typescript
+   * // CLI script - process millions of items at max speed
+   * const results = await beeThreads.max(millionItems).map(x => heavyMath(x))
+   * 
+   * // Batch job - all cores utilized
+   * const filtered = await beeThreads.max(hugeDataset).filter(x => x.valid)
+   * 
+   * // With stats
+   * const { data, stats } = await beeThreads
+   *   .max(data)
+   *   .mapWithStats(x => processItem(x))
+   * console.log(`Used ${stats.workersUsed} threads (including main)`)
+   * ```
+   */
+  max<TItem>(
+    data: TItem[],
+    options?: MaxOptions
+  ): TurboExecutor<TItem> {
+    if (!Array.isArray(data) && !ArrayBuffer.isView(data)) {
+      throw new TypeError(`max() requires an array or TypedArray, got ${typeof data}`);
+    }
+
+    // Security: Validate context if provided
+    if (options?.context && config.security.blockPrototypePollution) {
+      validateContextSecurity(options.context);
+    }
+
+    return createMaxExecutor<TItem>(data, options || {});
+  },
+
+  /**
    * Gracefully shuts down all worker pools.
    */
   async shutdown(): Promise<void> {
@@ -654,7 +718,7 @@ export type {
 export type { CoalescingStats } from './coalescing';
 
 // Re-export types from turbo module
-export type { TurboExecutor, TurboOptions, TurboStats, TurboResult } from './turbo';
+export type { TurboExecutor, TurboOptions, TurboStats, TurboResult, MaxOptions } from './turbo';
 
 // Re-export Runtime type
 export type { Runtime } from './config';

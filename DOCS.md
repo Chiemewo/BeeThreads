@@ -592,6 +592,133 @@ console.log(stats.speedupRatio); // "7.2x"
 
 ---
 
+### `src/turbo.ts` - Max Mode (Maximum Throughput)
+
+**Why it exists:**
+Provides **maximum CPU utilization** by including the main thread in parallel processing. While `turbo()` keeps the main thread free for event handling, `max()` sacrifices main thread availability for ultimate throughput.
+
+**What it does:**
+
+- Same API as turbo mode (`map`, `filter`, `reduce`)
+- Splits work across ALL CPU cores INCLUDING the main thread
+- Main thread processes its chunk while coordinating workers (async/sync hybrid)
+- Context injection works on both main thread and workers
+- Ideal for CLI scripts, batch processors, and dedicated processing servers
+
+**Key functions:**
+
+```typescript
+createMaxExecutor(data, options) // Creates executor with map/filter/reduce
+executeMaxMap(fn, data, options) // Parallel map with main thread
+executeMaxFilter(fn, data, options) // Parallel filter with main thread
+executeMaxReduce(fn, data, initial, options) // Parallel reduce with main thread
+compileWithContext(fn, context) // Injects context for main thread execution
+```
+
+**Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ max() on 8-core CPU = 7 workers + 1 main thread = 8 cores  │
+└─────────────────────────────────────────────────────────────┘
+                              │
+          ┌───────────────────┼───────────────────┐
+          ▼                   ▼                   ▼
+   ┌─────────────┐     ┌─────────────┐     ┌──────────────┐
+   │  Worker 1-7 │     │  Worker N   │     │ MAIN THREAD  │
+   │  (async)    │     │  (async)    │     │ (sync work)  │
+   └─────────────┘     └─────────────┘     └──────────────┘
+          │                   │                   │
+          └───────────────────┴───────────────────┘
+                              │
+                    await Promise.all()
+```
+
+**Example:**
+
+```js
+// CLI script - maximum throughput
+const data = new Array(1_000_000).fill(0).map((_, i) => i)
+const result = await beeThreads.max(data).map(x => heavyComputation(x))
+
+// Batch processor with stats
+const { data: processed, stats } = await beeThreads
+  .max(records)
+  .mapWithStats(record => transformRecord(record))
+
+console.log(`Used ${stats.workersUsed} threads (including main)`)
+console.log(`Speedup: ${stats.speedupRatio}`)
+
+// With context injection
+await beeThreads
+  .max(data, { context: { API_KEY: process.env.API_KEY } })
+  .map(item => processWithKey(item, API_KEY))
+```
+
+**When to use:**
+
+| Use Case | `turbo()` | `max()` |
+|----------|-----------|---------|
+| HTTP servers | ✅ | ❌ |
+| CLI scripts | ✅ | ✅✅✅ |
+| Batch jobs | ✅ | ✅✅✅ |
+| Event-driven apps | ✅ | ❌ |
+| Processing servers | ✅ | ✅✅✅ |
+
+**Is max() async/await?**
+
+YES! `max()` is fully async/await compatible:
+
+1. Starts workers (async coordination)
+2. **While waiting**, main thread processes its chunk (sync work)
+3. Awaits all workers to complete (async)
+4. Merges and returns results (async)
+
+The main thread blocks **only during step 2** (its own chunk processing). It's a hybrid: async coordination + sync work.
+
+**Performance vs turbo():**
+
+| Metric | `turbo()` | `max()` |
+|--------|-----------|---------|
+| **Cores used (8-core CPU)** | 7 workers | 8 (7 + main) |
+| **Main thread blocked** | No | Yes (during chunk processing) |
+| **Throughput gain** | Baseline | ~10-15% faster |
+| **HTTP server safe** | Yes | No |
+
+**Context injection implementation:**
+
+```typescript
+// Main thread gets same context support as workers
+function compileWithContext(fnString: string, context?: Record<string, unknown>): Function {
+  if (!context || Object.keys(context).length === 0) {
+    return new Function('return ' + fnString)();
+  }
+  
+  // Inject context variables
+  const contextKeys = Object.keys(context);
+  const contextValues = contextKeys.map(k => context[k]);
+  
+  const wrapperCode = `
+    return function(${contextKeys.join(', ')}) {
+      const fn = ${fnString};
+      return fn;
+    }
+  `;
+  
+  const wrapper = new Function(wrapperCode)();
+  return wrapper(...contextValues);
+}
+```
+
+**Optimizations applied:**
+
+- Batch worker acquisition (same as turbo)
+- Pre-calculated merge offsets (same as turbo)
+- Main thread processes chunk in parallel with workers
+- Zero overhead for context injection on main thread
+
+---
+
 ### `src/coalescing.ts` - Request Coalescing (Promise Deduplication)
 
 **Why it exists:**
@@ -775,7 +902,43 @@ calculateBackoff(attempt, baseDelay, maxDelay, factor)
 -  Overhead for small arrays exceeds parallel benefit
 -  Reduce operations require associative functions for correctness
 
-### 10. Why security by default?
+### 10. Why max mode (main thread + workers)?
+
+**Decision:** Add `max()` mode that includes the main thread in parallel processing, alongside `turbo()` which keeps main thread free.
+
+**Rationale:**
+
+- **Ultimate throughput:** On 8-core CPU, `turbo()` uses 7 workers (1 core idle), `max()` uses all 8 cores (~10-15% faster)
+- **Different use cases:** HTTP servers need main thread free (use `turbo()`), batch processors want max speed (use `max()`)
+- **Still async/await:** While main thread processes its chunk synchronously, overall coordination is async
+- **Safe by design:** Name "max" signals main thread involvement, users consciously choose when to use it
+- **Same API:** `max()` has identical API to `turbo()` for easy switching
+
+**Implementation details:**
+
+- Main thread compiles function with context injection (same logic as workers)
+- Processes its chunk **while** awaiting workers (parallel work)
+- No extra synchronization needed (Promise.all handles coordination)
+- Context injection uses same `compileWithContext()` helper on main thread
+
+**Trade-offs:**
+
+- Main thread blocked during chunk processing (not suitable for servers with incoming requests)
+- Only valuable when CPU utilization is bottleneck (not I/O bound tasks)
+- ~10-15% speedup may not justify loss of main thread responsiveness in many scenarios
+
+**When to recommend:**
+
+| Scenario | Recommendation |
+|----------|----------------|
+| HTTP/WebSocket servers | `turbo()` |
+| CLI data processing | `max()` |
+| Batch ETL jobs | `max()` |
+| Dedicated processing servers | `max()` |
+| Real-time event handling | `turbo()` |
+| Cron jobs | `max()` |
+
+### 11. Why security by default?
 
 **Decision:** Enable security protections by default with opt-out config.
 
@@ -1145,7 +1308,7 @@ npm run build && node dist/bundle.js
 ### Running Tests
 
 ```bash
-npm test  # Builds and runs 217 tests
+npm test  # Builds and runs 313 tests
 ```
 
 ### Code Style

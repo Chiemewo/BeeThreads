@@ -231,6 +231,8 @@ await beeThreads
 
 Process large arrays across **ALL CPU cores** with **fail-fast** error handling.
 
+> ✅ **Async (Non-blocking):** Main thread stays free for handling requests/events
+
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
 │  beeThreads.turbo([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]).map(fn)   │
@@ -284,45 +286,29 @@ const { data, stats } = await beeThreads.turbo(arr).mapWithStats(x => x * x)
 console.log(stats.speedupRatio) // "7.2x"
 ```
 
-### Image & Video Processing
+---
+
+## ⚡ Max Mode - One Task uses All Available Threads
+
+Uses **ALL threads including main thread** for maximum throughput. Same API as turbo, but ~15% faster.
 
 ```js
-// 🖼️ Image: Grayscale conversion (1920x1080 = 2M pixels)
-const imageBuffer = new Uint8Array(rawPixelData)
-const grayscale = await beeThreads
-	.turbo(imageBuffer)
-	.map(v => Math.round(v * 0.299)) // Simplified grayscale
-
-// 🎬 Video: Process frames with generator (memory efficient)
-const stream = beeThreads.stream(function* (videoPath) {
-	const decoder = createVideoDecoder(videoPath)
-	for (const frame of decoder) {
-		yield processFrame(frame) // Yields each frame as processed
-	}
-}).usingParams('video.mp4').execute()
-
-for await (const processedFrame of stream) {
-	writeFrame(processedFrame) // Stream to output without loading all in memory
-}
-
-// 🔥 Batch process video frames with turbo
-const frames = extractFrames('video.mp4') // Array of Uint8Array
-const processed = await Promise.all(
-	frames.map(frame => beeThreads.turbo(frame).map(px => px * 1.2))
-)
+// Same API as turbo
+const squares = await beeThreads.max(numbers).map(x => x * x)
+const evens = await beeThreads.max(numbers).filter(x => x % 2 === 0)
+const sum = await beeThreads.max(numbers).reduce((a, b) => a + b, 0)
 ```
 
-### When to Use
+**Key difference:** Main thread processes data (blocking) while coordinating workers.
 
-| Scenario | Best Choice | Why |
-| -------- | ----------- | --- |
-| Single heavy task | `bee()` | Simple, one worker |
-| Batch processing (10K+) | `turbo()` | Parallel across all cores |
-| TypedArray / Image | `turbo()` | SharedArrayBuffer, zero-copy |
-| Video / Large files | `stream()` | Memory efficient, yields as processed |
-| Real-time processing | `bee()` + `stream()` | Combine for best of both |
+| Feature | `turbo()` | `max()` |
+|---------|-----------|---------|
+| Main thread blocked | No | Yes |
+| Throughput | Good | Best (~15% faster) |
+| Use in HTTP servers | Yes | Depends |
+| Use in CLI/batch jobs | Yes | Best choice |
 
-> **Auto-fallback:** `turbo()` with < 10K items automatically uses single-worker mode.
+> **Auto-fallback:** Arrays < 10K items use single-worker mode.
 
 ---
 
@@ -482,6 +468,10 @@ const stream = beeThreads
 - **Large array processing** (turbo mode)
 - **Matrix operations** (turbo mode)
 - **Numerical simulations** (turbo mode)
+- **Batch processing servers** (max mode) - Dedicated processing servers
+- **Data pipelines** (max mode) - ETL, data transformation
+- **Video/image encoding services** (max mode) - Maximum throughput
+- **Scientific computing** (max mode) - CPU-intensive analysis
 
 ---
 
@@ -493,7 +483,8 @@ const stream = beeThreads
 - **Function caching** - LRU cache, 300-500x faster
 - **Worker affinity** - Same function → same worker (V8 JIT)
 - **Request coalescing** - Deduplicates identical calls
-- **Turbo mode** - Parallel array processing
+- **Turbo mode** - Parallel array processing (workers only)
+- **Max mode** - Maximum throughput (workers + main thread)
 - **Full TypeScript** - Complete type definitions
 
 ---
