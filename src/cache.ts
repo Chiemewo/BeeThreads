@@ -165,15 +165,70 @@ function getBaseContext(): vm.Context {
  * @returns Sandbox ready for vm.createContext()
  * @internal
  */
+/**
+ * LRU cache for reconstructed context functions.
+ * Avoids recompiling the same function when used in different contexts.
+ * @internal
+ */
+const reconstructedFnCache = new Map<string, Function>();
+const RECONSTRUCTED_FN_CACHE_SIZE = 64;
+
+/**
+ * Reconstructs serialized functions from context.
+ * Functions serialized with `__BEE_FN__:` prefix are converted back to real functions.
+ * Uses vm.Script for better performance and security (no eval!).
+ * Results are cached to avoid recompiling the same function in different contexts.
+ * 
+ * @param context - Context that may contain serialized functions
+ * @returns Context with functions reconstructed
+ * @internal
+ */
+function reconstructFunctions(context: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  const keys = Object.keys(context);
+  for (let i = 0, len = keys.length; i < len; i++) {
+    const key = keys[i];
+    const value = context[key];
+    if (typeof value === 'string' && value.startsWith('__BEE_FN__:')) {
+      const fnStr = value.slice(11); // Remove '__BEE_FN__:' prefix
+      
+      // Check cache first (same function may be used in different contexts)
+      let fn = reconstructedFnCache.get(fnStr);
+      if (!fn) {
+        // Cache miss - compile with vm.Script
+        try {
+          const script = new vm.Script('(' + fnStr + ')', { filename: `bee-context-fn-${key}.js` });
+          fn = script.runInThisContext() as Function;
+          
+          // LRU eviction if cache is full
+          if (reconstructedFnCache.size >= RECONSTRUCTED_FN_CACHE_SIZE) {
+            const firstKey = reconstructedFnCache.keys().next().value;
+            if (firstKey) reconstructedFnCache.delete(firstKey);
+          }
+          reconstructedFnCache.set(fnStr, fn);
+        } catch (e) {
+          throw new Error(`Failed to reconstruct function "${key}": ${(e as Error).message}`);
+        }
+      }
+      result[key] = fn;
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 function createSandbox(context?: Record<string, unknown> | null): Record<string, unknown> {
   // Create object with BASE_GLOBALS as prototype (no property copying!)
   const sandbox = Object.create(BASE_GLOBALS) as Record<string, unknown>;
 
   // Apply user context as own properties (overwrites if needed)
   if (context) {
-    const keys = Object.keys(context);
+    // Reconstruct any serialized functions first
+    const processedContext = reconstructFunctions(context);
+    const keys = Object.keys(processedContext);
     for (let i = 0, len = keys.length; i < len; i++) {
-      sandbox[keys[i]] = context[keys[i]];
+      sandbox[keys[i]] = processedContext[keys[i]];
     }
   }
 

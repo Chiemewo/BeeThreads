@@ -83,21 +83,62 @@ function getBaseContext() {
   return baseCtx;
 }
 
+// LRU cache for reconstructed context functions (avoids recompiling same fn in different contexts)
+const ctxFnCache = new Map();
+const CTX_FN_CACHE_SIZE = 64;
+
+// Reconstruct serialized functions from context using vm.Script (faster than eval!)
+function reconstructContext(context) {
+  if (!context) return context;
+  const result = {};
+  const keys = Object.keys(context);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const value = context[key];
+    if (typeof value === 'string' && value.startsWith('__BEE_FN__:')) {
+      const fnStr = value.slice(11); // Remove '__BEE_FN__:' prefix
+      // Check cache first
+      let fn = ctxFnCache.get(fnStr);
+      if (!fn) {
+        try {
+          const script = new vm.Script('(' + fnStr + ')', { filename: 'bee-context-fn.js' });
+          fn = script.runInThisContext();
+          // LRU eviction
+          if (ctxFnCache.size >= CTX_FN_CACHE_SIZE) {
+            const firstKey = ctxFnCache.keys().next().value;
+            if (firstKey) ctxFnCache.delete(firstKey);
+          }
+          ctxFnCache.set(fnStr, fn);
+        } catch (e) {
+          throw new Error('Failed to reconstruct function "' + key + '": ' + e.message);
+        }
+      }
+      result[key] = fn;
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 function compile(src, context) {
+  // Reconstruct any serialized functions in context
+  const processedContext = reconstructContext(context);
+  
   // IMPORTANT: Cache key must include context VALUES, not just keys!
   // Otherwise two calls with same function but different context values
   // would incorrectly return the cached function compiled with old values.
-  const ctxKey = context ? JSON.stringify(context) : '';
+  const ctxKey = processedContext ? JSON.stringify(context) : ''; // Use original for cache key
   const key = src + '::' + ctxKey;
   let fn = LOW_MEMORY ? null : cacheGet(key);
   if (fn) return fn;
 
   const script = new vm.Script('(' + src + ')', { filename: 'bee-worker.js' });
   
-  if (context && Object.keys(context).length > 0) {
+  if (processedContext && Object.keys(processedContext).length > 0) {
     const sandbox = Object.create(getBaseContext());
-    const keys = Object.keys(context);
-    for (let i = 0; i < keys.length; i++) sandbox[keys[i]] = context[keys[i]];
+    const keys = Object.keys(processedContext);
+    for (let i = 0; i < keys.length; i++) sandbox[keys[i]] = processedContext[keys[i]];
     fn = script.runInContext(vm.createContext(sandbox));
   } else {
     fn = script.runInContext(getBaseContext());
@@ -342,20 +383,60 @@ function getBaseContext() {
   return baseCtx;
 }
 
+// LRU cache for reconstructed context functions (avoids recompiling same fn in different contexts)
+const ctxFnCache = new Map();
+const CTX_FN_CACHE_SIZE = 64;
+
+// Reconstruct serialized functions from context using vm.Script (faster than eval!)
+function reconstructContext(context) {
+  if (!context) return context;
+  const result = {};
+  const keys = Object.keys(context);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const value = context[key];
+    if (typeof value === 'string' && value.startsWith('__BEE_FN__:')) {
+      const fnStr = value.slice(11);
+      // Check cache first
+      let fn = ctxFnCache.get(fnStr);
+      if (!fn) {
+        try {
+          const script = new vm.Script('(' + fnStr + ')', { filename: 'bee-context-fn.js' });
+          fn = script.runInThisContext();
+          // LRU eviction
+          if (ctxFnCache.size >= CTX_FN_CACHE_SIZE) {
+            const firstKey = ctxFnCache.keys().next().value;
+            if (firstKey) ctxFnCache.delete(firstKey);
+          }
+          ctxFnCache.set(fnStr, fn);
+        } catch (e) {
+          throw new Error('Failed to reconstruct function "' + key + '": ' + e.message);
+        }
+      }
+      result[key] = fn;
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
 function compile(src, context) {
+  const processedContext = reconstructContext(context);
+  
   // IMPORTANT: Cache key must include context VALUES, not just keys!
   // Otherwise two calls with same function but different context values
   // would incorrectly return the cached function compiled with old values.
-  const ctxKey = context ? JSON.stringify(context) : '';
+  const ctxKey = processedContext ? JSON.stringify(context) : '';
   const key = src + '::' + ctxKey;
   let fn = LOW_MEMORY ? null : cacheGet(key);
   if (fn) return fn;
 
   const script = new vm.Script('(' + src + ')', { filename: 'bee-generator.js' });
   
-  if (context && Object.keys(context).length > 0) {
+  if (processedContext && Object.keys(processedContext).length > 0) {
     const sandbox = Object.create(getBaseContext());
-    for (const k of Object.keys(context)) sandbox[k] = context[k];
+    for (const k of Object.keys(processedContext)) sandbox[k] = processedContext[k];
     fn = script.runInContext(vm.createContext(sandbox));
   } else {
     fn = script.runInContext(getBaseContext());

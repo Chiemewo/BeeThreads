@@ -1017,11 +1017,14 @@ async function runTests(): Promise<void> {
     assert.strictEqual(result, 42);
   });
 
-  await test('setContext() throws for function values', () => {
-    assert.throws(
-      () => beeThreads.run(() => 42).setContext({ fn: () => 1 }),
-      /contains a function which cannot be serialized/
-    );
+  await test('setContext() accepts function values (auto-serialized)', async () => {
+    // Functions are now automatically serialized and reconstructed in workers!
+    const myDoubler = (x: number) => x * 2;
+    const result = await beeThreads.run((n: number) => myDoubler(n))
+      .setContext({ myDoubler })
+      .usingParams(21)
+      .execute();
+    assert.strictEqual(result, 42, 'Function should be reconstructed in worker');
   });
 
   await test('setContext() throws for Symbol values', () => {
@@ -4152,6 +4155,137 @@ async function runTests(): Promise<void> {
       assert.strictEqual(results[i].length, 10_000, `Result ${i} has correct length`);
       assert.strictEqual(results[i][0], i + 1, `Result ${i} has correct value`);
     }
+  });
+
+  // ---------- FILE WORKER TESTS ----------
+  section('File Worker - beeThreads.worker()');
+
+  await test('worker() executes simple worker file', async () => {
+    const result = await beeThreads.worker('./test-workers/simple-worker.js')(21);
+    assert.strictEqual(result, 42, 'Worker should return doubled value');
+  });
+
+  await test('worker() has access to require()', async () => {
+    const result = await beeThreads.worker('./test-workers/math-worker.js')([1, 2, 3, 4, 5]) as any;
+    assert.strictEqual(result.sum, 15, 'Sum should be correct');
+    assert.strictEqual(result.avg, 3, 'Average should be correct');
+    assert.ok(result.hash, 'Hash should exist (crypto module)');
+  });
+
+  await test('worker() handles multiple arguments', async () => {
+    const result = await beeThreads.worker('./test-workers/multi-args-worker.js')(2, 3, 4) as any;
+    assert.strictEqual(result.sum, 9, 'Sum should be 2+3+4=9');
+    assert.strictEqual(result.product, 24, 'Product should be 2*3*4=24');
+  });
+
+  await test('worker() handles parallel calls', async () => {
+    const worker = beeThreads.worker('./test-workers/simple-worker.js');
+    const results = await Promise.all([
+      worker(1),
+      worker(2),
+      worker(3),
+      worker(4)
+    ]);
+    assert.deepStrictEqual(results, [2, 4, 6, 8], 'All parallel calls should complete');
+  });
+
+  await test('worker() propagates errors', async () => {
+    try {
+      await beeThreads.worker('./test-workers/error-worker.js')(true);
+      assert.fail('Should have thrown');
+    } catch (e: any) {
+      assert.ok(e.message.includes('Intentional worker error'), 'Error message should propagate');
+    }
+  });
+
+  await test('worker() returns success when no error', async () => {
+    const result = await beeThreads.worker('./test-workers/error-worker.js')(false);
+    assert.strictEqual(result, 'success', 'Should return success');
+  });
+
+  await test('worker() handles slow operations', async () => {
+    const start = Date.now();
+    const result = await beeThreads.worker('./test-workers/slow-worker.js')(50);
+    const elapsed = Date.now() - start;
+    
+    assert.strictEqual(result, 'waited 50ms', 'Should return correct message');
+    assert.ok(elapsed >= 40, 'Should have waited at least 40ms');
+  });
+
+  await test('worker() reuses workers from pool', async () => {
+    const worker = beeThreads.worker('./test-workers/simple-worker.js');
+    
+    // Multiple sequential calls should reuse workers
+    for (let i = 0; i < 10; i++) {
+      const result = await worker(i);
+      assert.strictEqual(result, i * 2, `Call ${i} should work`);
+    }
+  });
+
+  await test('worker() handles concurrent load', async () => {
+    const worker = beeThreads.worker('./test-workers/math-worker.js');
+    const promises = [];
+    
+    for (let i = 0; i < 20; i++) {
+      promises.push(worker([i, i + 1, i + 2]));
+    }
+    
+    const results = await Promise.all(promises) as any[];
+    
+    for (let i = 0; i < 20; i++) {
+      assert.strictEqual(results[i].sum, i + (i + 1) + (i + 2), `Result ${i} sum correct`);
+    }
+  });
+
+  // ---------- FILE WORKER TURBO TESTS ----------
+  section('File Worker Turbo Mode - worker().turbo()');
+
+  await test('worker().turbo() processes array in parallel', async () => {
+    const results = await beeThreads.worker('./test-workers/chunk-worker.js')
+      .turbo([1, 2, 3, 4, 5, 6, 7, 8], { workers: 4 });
+    
+    assert.deepStrictEqual(results, [2, 4, 6, 8, 10, 12, 14, 16], 'All items doubled');
+  });
+
+  await test('worker().turbo() maintains order', async () => {
+    const input = Array.from({ length: 100 }, (_, i) => i);
+    const results = await beeThreads.worker('./test-workers/chunk-worker.js')
+      .turbo(input, { workers: 4 });
+    
+    const expected = input.map(x => x * 2);
+    assert.deepStrictEqual(results, expected, 'Order preserved after parallel processing');
+  });
+
+  await test('worker().turbo() handles small arrays', async () => {
+    const results = await beeThreads.worker('./test-workers/chunk-worker.js')
+      .turbo([1, 2], { workers: 8 });
+    
+    assert.deepStrictEqual(results, [2, 4], 'Small array processed correctly');
+  });
+
+  await test('worker().turbo() uses default workers', async () => {
+    const results = await beeThreads.worker('./test-workers/chunk-worker.js')
+      .turbo([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    
+    assert.strictEqual(results.length, 10, 'All items processed');
+    assert.deepStrictEqual(results, [2, 4, 6, 8, 10, 12, 14, 16, 18, 20], 'Correct values');
+  });
+
+  await test('worker().turbo() with custom workers count', async () => {
+    const results = await beeThreads.worker('./test-workers/chunk-worker.js')
+      .turbo([1, 2, 3, 4, 5, 6], { workers: 2 });
+    
+    assert.deepStrictEqual(results, [2, 4, 6, 8, 10, 12], 'Processed with 2 workers');
+  });
+
+  await test('worker().turbo() handles large array', async () => {
+    const input = Array.from({ length: 1000 }, (_, i) => i);
+    const results = await beeThreads.worker('./test-workers/chunk-worker.js')
+      .turbo(input, { workers: 4 });
+    
+    assert.strictEqual(results.length, 1000, 'All 1000 items processed');
+    assert.strictEqual(results[0], 0, 'First item correct');
+    assert.strictEqual(results[999], 1998, 'Last item correct');
   });
 
   // ---------- SUMMARY ----------

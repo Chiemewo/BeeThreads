@@ -102,31 +102,45 @@ export function createStreamExecutor<T = unknown>(state: StreamExecutorState): S
 
     /**
      * Injects closure variables.
+     * Functions are automatically serialized and reconstructed in the worker.
+     * 
+     * @example
+     * ```typescript
+     * import { helper } from './utils';
+     * 
+     * beeThreads.stream(function* (data) {
+     *   for (const item of data) yield helper(item);
+     * })
+     *   .setContext({ helper })  // Functions work now!
+     *   .usingParams(myArray)
+     *   .execute();
+     * ```
      */
     setContext(ctx: Record<string, unknown>): StreamExecutor<T> {
       if (typeof ctx !== 'object' || ctx === null) {
         throw new TypeError('setContext() requires a non-null object');
       }
-      // Validate that context doesn't contain non-serializable values
+      
+      // Serialize functions automatically
+      const serializedContext: Record<string, unknown> = {};
       const ctxKeys = Object.keys(ctx);
       for (let i = 0, len = ctxKeys.length; i < len; i++) {
         const key = ctxKeys[i];
         const value = ctx[key];
         if (typeof value === 'function') {
-          throw new TypeError(
-            `setContext() key "${key}" contains a function which cannot be serialized. ` +
-            `Convert it to a string first: { ${key}: yourFn.toString() }`
-          );
-        }
-        if (typeof value === 'symbol') {
+          // Serialize function with special prefix for reconstruction
+          serializedContext[key] = `__BEE_FN__:${value.toString()}`;
+        } else if (typeof value === 'symbol') {
           throw new TypeError(
             `setContext() key "${key}" contains a Symbol which cannot be serialized.`
           );
+        } else {
+          serializedContext[key] = value;
         }
       }
       return createStreamExecutor<T>({
         fnString,
-        context: ctx,
+        context: serializedContext,
         args,
         transfer,
         shouldReconstructBuffers

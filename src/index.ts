@@ -41,6 +41,8 @@ import { stream } from './stream-executor';
 import { warmupPool, getQueueLength } from './pool';
 import { validateTimeout, validatePoolSize, validateContextSecurity } from './validation';
 import { deepFreeze } from './utils';
+import { createFileWorker, terminateFileWorkers } from './file-worker';
+import type { FileWorkerExecutor } from './file-worker';
 import {
   AsyncThreadError,
   AbortError,
@@ -79,6 +81,26 @@ interface BeeClosuresArg {
  */
 function hasBeeClosures(obj: unknown): obj is BeeClosuresArg {
   return obj !== null && typeof obj === 'object' && !Array.isArray(obj) && 'beeClosures' in obj;
+}
+
+/**
+ * Serializes functions in context for transfer to worker.
+ * Functions are converted to strings with __BEE_FN__ prefix for reconstruction.
+ * @internal
+ */
+function serializeContextFunctions(context: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  const keys = Object.keys(context);
+  for (let i = 0, len = keys.length; i < len; i++) {
+    const key = keys[i];
+    const value = context[key];
+    if (typeof value === 'function') {
+      result[key] = `__BEE_FN__:${value.toString()}`;
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
 }
 
 /**
@@ -169,12 +191,15 @@ export function bee<T extends (...args: any[]) => any>(fn: T): CurriedFunction<R
           validateContextSecurity(closuresArg.beeClosures);
         }
         
+        // Serialize functions in beeClosures (auto-reconstruction in worker)
+        const serializedClosures = serializeContextFunctions(closuresArg.beeClosures);
+        
         // Found beeClosures - execute with context (returns Promise, which is PromiseLike)
         const params = paramsFromThisCall || callArgs;
         const allArgs = accumulatedArgs.length > 0 
           ? accumulatedArgs.concat(params)
           : params;
-        return execute<R>(fnString, allArgs, { context: closuresArg.beeClosures }) as unknown as CurriedFunction<R>;
+        return execute<R>(fnString, allArgs, { context: serializedClosures }) as unknown as CurriedFunction<R>;
       }
 
       if (callArgs.length === 0) {
@@ -535,6 +560,9 @@ export const beeThreads = {
     }
     await Promise.all(promises);
 
+    // Terminate file workers
+    await terminateFileWorkers();
+
     metrics.activeTemporaryWorkers = 0;
   },
 
@@ -684,6 +712,45 @@ export const beeThreads = {
    */
   resetCoalescingStats(): void {
     resetCoalescingStats();
+  },
+
+  // ==========================================================================
+  // FILE WORKER
+  // ==========================================================================
+
+  /**
+   * Creates a type-safe worker from a file path.
+   * 
+   * The worker file must export a default function. The worker has full access
+   * to `require()` and can use database connections, external modules, etc.
+   * 
+   * Supports both single execution and turbo mode for parallel array processing.
+   * 
+   * @param filePath - Path to the worker file
+   * @returns Executor with call and turbo methods
+   * 
+   * @example
+   * ```typescript
+   * // workers/process-user.ts
+   * import { db } from '../database';
+   * export default async function(user: User): Promise<ProcessedUser> {
+   *   return { ...user, score: await db.getScore(user.id) };
+   * }
+   * 
+   * // main.ts - Single execution
+   * import type processUser from './workers/process-user';
+   * const result = await beeThreads.worker<typeof processUser>('./workers/process-user')(user);
+   * 
+   * // main.ts - Turbo mode (parallel array processing)
+   * // Worker receives chunks: (users: User[]) => ProcessedUser[]
+   * const results = await beeThreads.worker('./workers/process-users.js')
+   *   .turbo(users, { workers: 8 });
+   * ```
+   */
+  worker<T extends (...args: any[]) => any>(
+    filePath: string
+  ): FileWorkerExecutor<T> {
+    return createFileWorker<T>(filePath);
   }
 };
 
@@ -720,6 +787,9 @@ export type { CoalescingStats } from './coalescing';
 
 // Re-export types from turbo module
 export type { TurboExecutor, TurboOptions, TurboStats, TurboResult, MaxOptions } from './turbo';
+
+// Re-export types from file-worker module
+export type { FileWorkerExecutor, TurboWorkerOptions } from './file-worker';
 
 // Re-export Runtime type
 export type { Runtime } from './config';

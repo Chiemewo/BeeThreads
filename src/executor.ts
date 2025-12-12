@@ -92,6 +92,16 @@ export function createExecutor<T = unknown>(state: ExecutorState): Executor<T> {
 
     /**
      * Injects external variables into the function's scope.
+     * Functions are automatically serialized and reconstructed in the worker.
+     * 
+     * @example
+     * ```typescript
+     * import { helper } from './utils';
+     * 
+     * await bee((data) => data.map(helper))
+     *   .setContext({ helper })  // Functions work now!
+     *   (myArray);
+     * ```
      */
     setContext(context: Record<string, unknown>): Executor<T> {
       if (typeof context !== 'object' || context === null) {
@@ -103,26 +113,26 @@ export function createExecutor<T = unknown>(state: ExecutorState): Executor<T> {
         validateContextSecurity(context);
       }
       
-      // Validate that context doesn't contain non-serializable values
+      // Serialize functions automatically
+      const serializedContext: Record<string, unknown> = {};
       const contextKeys = Object.keys(context);
       for (let i = 0, len = contextKeys.length; i < len; i++) {
         const key = contextKeys[i];
         const value = context[key];
         if (typeof value === 'function') {
-          throw new TypeError(
-            `setContext() key "${key}" contains a function which cannot be serialized. ` +
-            `Convert it to a string first: { ${key}: yourFn.toString() }`
-          );
-        }
-        if (typeof value === 'symbol') {
+          // Serialize function with special prefix for reconstruction
+          serializedContext[key] = `__BEE_FN__:${value.toString()}`;
+        } else if (typeof value === 'symbol') {
           throw new TypeError(
             `setContext() key "${key}" contains a Symbol which cannot be serialized.`
           );
+        } else {
+          serializedContext[key] = value;
         }
       }
       return createExecutor<T>({
         fnString,
-        options: { ...options, context },
+        options: { ...options, context: serializedContext },
         args
       });
     },

@@ -11,14 +11,15 @@
 1. [What is bee-threads?](#what-is-bee-threads)
 2. [Architecture Overview](#architecture-overview)
 3. [File-by-File Breakdown](#file-by-file-breakdown)
-4. [Technical Decisions](#technical-decisions)
-5. [Security Architecture](#security-architecture)
-6. [Performance Architecture](#performance-architecture)
-7. [Data Flow](#data-flow)
-8. [Error Handling](#error-handling)
-9. [Memory Management](#memory-management)
-10.   [Runtime & Bundler Compatibility](#runtime--bundler-compatibility)
-11.   [Contributing Guide](#contributing-guide)
+4. [File Workers](#file-workers)
+5. [Technical Decisions](#technical-decisions)
+6. [Security Architecture](#security-architecture)
+7. [Performance Architecture](#performance-architecture)
+8. [Data Flow](#data-flow)
+9. [Error Handling](#error-handling)
+10. [Memory Management](#memory-management)
+11. [Runtime & Bundler Compatibility](#runtime--bundler-compatibility)
+12. [Contributing Guide](#contributing-guide)
 
 ---
 
@@ -829,6 +830,149 @@ function reconstructBuffers(value: unknown): unknown {
 	// Recursively handle arrays and plain objects...
 }
 ```
+
+---
+
+## File Workers
+
+File workers allow running external worker files with full `require()` access. This is essential when workers need to access:
+
+- **Database connections** (PostgreSQL, MongoDB, Redis)
+- **External modules** (sharp, bcrypt, custom libraries)
+- **File system** (fs, path)
+- **Environment variables** and configuration
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    beeThreads.worker(path)                          │
+└─────────────────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                     file-worker.ts                                  │
+│  • Worker pool per file path                                        │
+│  • Auto-scaling (up to cpus - 1)                                    │
+│  • Worker reuse across calls                                        │
+└─────────────────────────────────────────────────────────────────────┘
+                                │
+        ┌───────────────────────┼───────────────────────┐
+        ▼                       ▼                       ▼
+ ┌─────────────┐         ┌─────────────┐         ┌─────────────┐
+ │  Worker 1   │         │  Worker 2   │         │  Worker 3   │
+ │  require()  │         │  require()  │         │  require()  │
+ │  db conn    │         │  db conn    │         │  db conn    │
+ └─────────────┘         └─────────────┘         └─────────────┘
+```
+
+### `src/file-worker.ts` - File Worker Implementation
+
+**Why it exists:**
+Enables workers to use `require()` for external dependencies - impossible with inline workers.
+
+**What it does:**
+
+- Creates worker pools per file path
+- Manages worker lifecycle and reuse
+- Supports both single execution and turbo mode
+- Type-safe generic API
+
+**Key exports:**
+
+| Export | Description |
+|--------|-------------|
+| `createFileWorker<T>` | Creates type-safe file worker executor |
+| `terminateFileWorkers` | Terminates all file workers |
+| `FileWorkerExecutor<T>` | Interface with call and turbo methods |
+
+### Single Execution
+
+```js
+// workers/process-user.js
+const db = require('./database')
+module.exports = async function(userId) {
+  return db.findUser(userId)
+}
+
+// main.js
+const user = await beeThreads.worker('./workers/process-user.js')(123)
+```
+
+### Turbo Mode - Parallel Array Processing
+
+When you have a large array and need to process it with database access:
+
+```js
+// workers/process-chunk.js
+const db = require('./database')
+const cache = require('./cache')
+
+module.exports = async function(users) {
+  return Promise.all(users.map(async user => ({
+    ...user,
+    score: await db.getScore(user.id),
+    cached: cache.get(user.id)
+  })))
+}
+
+// main.js - Process 10,000 users across 8 workers
+const results = await beeThreads
+  .worker('./workers/process-chunk.js')
+  .turbo(users, { workers: 8 })
+```
+
+**How turbo mode works:**
+
+1. **Split**: Array divided into N chunks (one per worker)
+2. **Execute**: Each worker processes its chunk in parallel
+3. **Merge**: Results combined in original order
+
+```
+[u1, u2, u3, u4, u5, u6, u7, u8] → workers: 4
+       ↓
+Worker 1: [u1, u2] → [r1, r2]
+Worker 2: [u3, u4] → [r3, r4]
+Worker 3: [u5, u6] → [r5, r6]
+Worker 4: [u7, u8] → [r7, r8]
+       ↓
+[r1, r2, r3, r4, r5, r6, r7, r8] (order preserved)
+```
+
+### Type Safety (TypeScript)
+
+```ts
+// workers/find-user.ts
+import { db } from '../database'
+export default async function(id: number): Promise<User> {
+  return db.query('SELECT * FROM users WHERE id = ?', [id])
+}
+
+// main.ts - Full type inference
+import type findUser from './workers/find-user'
+
+const user = await beeThreads.worker<typeof findUser>('./workers/find-user')(123)
+//    ^User                                                                   ^number
+```
+
+### Worker Pool Behavior
+
+| Aspect | Behavior |
+|--------|----------|
+| Pool size | Up to `cpus - 1` per file |
+| Worker reuse | Yes, across all calls |
+| Idle cleanup | Not automatic (call `shutdown`) |
+| Error isolation | Errors don't crash other workers |
+
+### When to Use File Workers vs Inline
+
+| Scenario | Use |
+|----------|-----|
+| Pure computation | `bee()` or `turbo()` |
+| Need `require()` | `worker()` |
+| Database access | `worker()` |
+| Large array + DB | `worker().turbo()` |
+| Single item + DB | `worker()` (single call) |
 
 ---
 

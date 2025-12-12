@@ -342,6 +342,103 @@ const { data, stats } = await beeThreads.turbo(arr).mapWithStats(x => x * x)
 console.log(stats.speedupRatio) // "7.2x"
 ```
 
+## 🚀 File Workers - External Files with `require()` Access
+
+When you need workers to access **external modules**, **database connections**, or **file system** — use file workers.
+
+### Basic Usage
+
+```js
+// workers/process-user.js
+const db = require('./database')
+const cache = require('./cache')
+
+module.exports = async function (userId) {
+	const user = await db.findUser(userId)
+	return { ...user, cached: cache.get(userId) }
+}
+
+// main.js
+const { beeThreads } = require('bee-threads')
+
+const user = await beeThreads.worker('./workers/process-user.js')(123)
+```
+
+### Type-Safe Workers (TypeScript)
+
+```ts
+// workers/find-user.ts
+import { db } from '../database'
+export default async function (id: number): Promise<User> {
+	return db.query('SELECT * FROM users WHERE id = ?', [id])
+}
+
+// main.ts
+import type findUser from './workers/find-user'
+const user = await beeThreads.worker<typeof findUser>('./workers/find-user')(123)
+//    ^User                                                                   ^number
+```
+
+### 🔥 Turbo Mode for File Workers
+
+Process large arrays with file workers across **ALL CPU cores**:
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  beeThreads.worker('./process-chunk.js').turbo(users, { workers: 4 })│
+└──────────────────────────────────────────────────────────────────────┘
+                                │
+                     ┌──────────┴──────────┐
+                     │   SPLIT INTO CHUNKS │
+                     └──────────┬──────────┘
+                                │
+          ┌─────────────────────┼─────────────────────┐
+          ▼                     ▼                     ▼
+   ┌─────────────┐       ┌─────────────┐       ┌─────────────┐
+   │  Worker 1   │       │  Worker 2   │       │  Worker 3   │
+   │ [u1,u2,u3]  │       │ [u4,u5,u6]  │       │ [u7,u8,u9]  │
+   │ require DB  │       │ require DB  │       │ require DB  │
+   └─────────────┘       └─────────────┘       └─────────────┘
+          │                     │                     │
+          └─────────────────────┼─────────────────────┘
+                                ▼
+                     ┌──────────────────────┐
+                     │  MERGE (order kept)  │
+                     │   [r1,r2...r9]       │
+                     └──────────────────────┘
+```
+
+```js
+// workers/process-chunk.js
+const db = require('./database')
+const calculateScore = require('./score')
+
+module.exports = async function (users) {
+	return Promise.all(
+		users.map(async user => ({
+			...user,
+			score: await calculateScore(user),
+			dbData: await db.fetch(user.id),
+		}))
+	)
+}
+
+// main.js - Process 10,000 users across 8 workers
+const results = await beeThreads.worker('./workers/process-chunk.js').turbo(users, { workers: 8 })
+```
+
+### When to Use
+
+| Need | Use |
+|------|-----|
+| Pure computation | `bee()` or `turbo()` |
+| Database/Redis | `worker().turbo()` |
+| External files/modules | `worker().turbo()` |
+| File system operations | `worker().turbo()` |
+| Third-party libraries | `worker().turbo()` |
+
+---
+
 ## Request Coalescing
 
 Prevents duplicate simultaneous calls from running multiple times. When the same function with identical arguments is called while a previous call is in-flight, subsequent calls share the same Promise.
@@ -497,6 +594,9 @@ const stream = beeThreads
 - **Large array processing** (turbo mode)
 - **Matrix operations** (turbo mode)
 - **Numerical simulations** (turbo mode)
+- **Database batch operations** (file worker turbo)
+- **ETL pipelines** (file worker turbo)
+- **API aggregation** (file worker turbo)
 - Data pipelines
 - Video/image encoding services
 - Scientific computing
@@ -514,33 +614,47 @@ node benchmarks.js  # Node
 
 ### Results (1M items, heavy function, 12 CPUs, 10 runs avg)
 
-**Bun** - Real parallel speedup:
+**Bun (Windows)**
 
 | Mode | Time (±std) | Speedup | Main Thread |
 |------|-------------|---------|-------------|
 | main | 285±5ms | 1.00x | ❌ blocked |
 | bee | 1138±51ms | 0.25x | ✅ free |
-| turbo(4) | 255±7ms | 1.12x | ✅ free |
-| turbo(8) | 180±8ms | **1.58x** | ✅ free |
+| turbo(8) | 180±8ms | 1.58x | ✅ free |
 | **turbo(12)** | **156±12ms** | **1.83x** | ✅ free |
-| turbo(16) | 204±28ms | 1.40x | ✅ free |
 
-**Node** - Non-blocking I/O (slower, but frees main thread):
+**Bun (Linux/Docker)**
+
+| Mode | Time (±std) | Speedup | Main Thread |
+|------|-------------|---------|-------------|
+| main | 338±8ms | 1.00x | ❌ blocked |
+| bee | 1882±64ms | 0.18x | ✅ free |
+| turbo(8) | 226±7ms | 1.50x | ✅ free |
+| **turbo(12)** | **213±20ms** | **1.59x** | ✅ free |
+
+**Node (Windows)**
 
 | Mode | Time (±std) | Speedup | Main Thread |
 |------|-------------|---------|-------------|
 | main | 368±13ms | 1.00x | ❌ blocked |
 | bee | 5569±203ms | 0.07x | ✅ free |
-| turbo(4) | 1793±85ms | 0.21x | ✅ free |
 | turbo(8) | 1052±22ms | 0.35x | ✅ free |
 | **turbo(12)** | **1017±57ms** | **0.36x** | ✅ free |
-| turbo(16) | 1099±98ms | 0.34x | ✅ free |
+
+**Node (Linux/Docker)**
+
+| Mode | Time (±std) | Speedup | Main Thread |
+|------|-------------|---------|-------------|
+| main | 522±54ms | 1.00x | ❌ blocked |
+| bee | 5520±163ms | 0.09x | ✅ free |
+| turbo(8) | 953±44ms | 0.55x | ✅ free |
+| **turbo(12)** | **861±64ms** | **0.61x** | ✅ free |
 
 ### Key Insights
 
-- **Bun + turbo(cpus)**: Up to **1.83x faster** than main thread
+- **Bun + turbo**: **1.6-1.8x faster** than main thread (both OS)
+- **Node + Linux**: **0.61x** - much better than Windows (0.36x)
 - **bee/turbo**: Non-blocking - main thread stays **free for HTTP/I/O**
-- **Node + turbo**: Slower, but useful for keeping servers responsive
 - **bee vs turbo**: turbo is **7x faster** than bee for large arrays
 - **Default workers**: `cpus - 1` (safe for all systems)
 
@@ -574,6 +688,7 @@ await beeThreads.turbo(data, { workers: 12 }).map(fn)
 - **Worker affinity** - Same function → same worker (V8 JIT)
 - **Request coalescing** - Deduplicates identical calls
 - **Turbo mode** - Parallel array processing (workers only)
+- **File workers** - External files with `require()` + turbo mode
 - **Full TypeScript** - Complete type definitions
 
 ---
