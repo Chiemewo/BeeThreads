@@ -15,6 +15,10 @@ declare interface ErrorConstructor {
   new(message?: string, options?: { cause?: unknown }): Error;
 }
 
+// Context variables injected by turbo/bee - declared for TypeScript
+declare const mult: number;
+declare const offs: number;
+
 let passed = 0;
 let failed = 0;
 
@@ -2988,9 +2992,6 @@ async function runTests(): Promise<void> {
       results.includes('shutdown') || results.includes('completed'),
       'Tasks should either complete or receive shutdown error'
     );
-    
-    // Restore pool to normal state for next tests
-    beeThreads.configure({ poolSize: 4, maxTemporaryWorkers: 2, maxQueueSize: 1000 });
   });
 
   section('Cache Edge Cases');
@@ -3592,6 +3593,28 @@ async function runTests(): Promise<void> {
 
   // ---------- TURBO COEXISTENCE TESTS ----------
   section('Turbo Mode - Coexistence with Other Features');
+
+  await test('COEXIST: turbo with context + normal bee with context', async () => {
+    // Note: We use "mult" and "offs" to avoid TypeScript renaming closures
+    // The function references must match the context keys exactly
+    const turboCtx = { mult: 5 };
+    const beeCtx = { offs: 100 };
+    
+    // When using context, the function should reference context vars by name
+    // TypeScript will serialize the function as-is, so mult/offs must match
+    const turboResult = await beeThreads
+      .turbo([1, 2, 3], { force: true, context: turboCtx })
+      .map((x: number) => x * mult);
+    
+    const beeResult = await beeThreads
+      .run((x: number) => x + offs)
+      .usingParams(50)
+      .setContext(beeCtx)
+      .execute();
+    
+    assert.deepStrictEqual(turboResult, [5, 10, 15], 'Turbo with context works');
+    assert.strictEqual(beeResult, 150, 'Bee with context works');
+  });
 
   await test('COEXIST: turbo does not affect request coalescing', async () => {
     beeThreads.resetCoalescingStats();

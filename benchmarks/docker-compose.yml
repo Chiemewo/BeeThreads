@@ -1,0 +1,10 @@
+services:
+  benchmark:
+    build:
+      context: ..
+      dockerfile: benchmarks/Dockerfile
+    container_name: bee-threads-benchmark
+    # Use all available CPUs
+    cpus: 0
+    # Increase memory for large array processing
+    mem_limit: 4g

@@ -286,9 +286,14 @@ export async function executeOnce<T = unknown>(
     worker.on('error', onError);
     worker.on('exit', onExit);
 
-    const message = { fn: fnString, args, context };
+    // V8: Monomorphic message shape
+    const message = { fn: fnString, args: args, context: context };
     // Cast needed: ArrayBufferLike includes SharedArrayBuffer which is already shared, not transferred
-    transfer.length > 0 ? worker.postMessage(message, transfer as ArrayBuffer[]) : worker.postMessage(message);
+    if (transfer.length > 0) {
+      worker.postMessage(message, transfer as ArrayBuffer[]);
+    } else {
+      worker.postMessage(message);
+    }
   });
 }
 

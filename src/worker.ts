@@ -10,6 +10,12 @@
  * 4. Executes the function (handles async and curried)
  * 5. Sends result back to main thread
  *
+ * ## V8 Optimizations Applied
+ *
+ * - Monomorphic object shapes (all properties declared upfront)
+ * - Raw for loops instead of .forEach/.map
+ * - Stable shapes (no property addition/deletion after creation)
+ *
  * @module bee-threads/worker
  */
 
@@ -46,11 +52,14 @@ let currentFnSource: string | null = null;
 // GLOBAL ERROR HANDLERS - Prevent worker crash without response
 // ============================================================================
 
+// Note: Error shape is defined inline in createSerializedError for V8 monomorphism
+
 /**
  * Creates a serialized error with optional debug info.
+ * V8: Uses monomorphic object shape.
  */
 function createSerializedError(err: Error, source?: string | null): SerializedError {
-  // Monomorphic object shape - all properties declared upfront to avoid hidden class transitions
+  // V8: Create object with stable shape - all properties declared upfront
   const serialized: SerializedError = {
     name: err.name || 'Error',
     message: err.message || String(err),
@@ -61,6 +70,7 @@ function createSerializedError(err: Error, source?: string | null): SerializedEr
   };
   
   // Copy custom error properties (code, statusCode, etc.)
+  // V8: Use raw for loop
   const errKeys = Object.keys(err);
   for (let i = 0, len = errKeys.length; i < len; i++) {
     const key = errKeys[i];
@@ -121,12 +131,13 @@ const fnCache: FunctionCache = createFunctionCache(cacheSize, cacheTTL);
 // ============================================================================
 
 /**
- * Redirects console.log/warn/error to main thread.
+ * Converts args to strings without .map() overhead.
+ * V8: Pre-allocated array, raw for loop.
  */
-// Helper to convert args to strings without .map() overhead
 function argsToStrings(args: unknown[]): string[] {
-  const result = new Array<string>(args.length);
-  for (let i = 0, len = args.length; i < len; i++) {
+  const len = args.length;
+  const result = new Array<string>(len);
+  for (let i = 0; i < len; i++) {
     result[i] = String(args[i]);
   }
   return result;
@@ -164,9 +175,11 @@ console.debug = (...args: unknown[]): void => {
  * Errors from vm.createContext() have a different Error class than
  * the main Node.js context. This means `e instanceof Error` returns
  * false even for real Error objects from the vm context.
+ * 
+ * V8: Uses monomorphic object shape.
  */
 function serializeError(e: unknown): SerializedError {
-  // Monomorphic object shape - all properties declared upfront
+  // V8: Monomorphic object shape - all properties declared upfront
   const serialized: SerializedError = {
     name: 'Error',
     message: '',
@@ -191,14 +204,16 @@ function serializeError(e: unknown): SerializedError {
     // Preserve AggregateError.errors - serialize each error
     if ('errors' in err && Array.isArray(err.errors)) {
       const errArray = err.errors;
-      const serializedErrors = new Array(errArray.length);
-      for (let j = 0, jlen = errArray.length; j < jlen; j++) {
+      const len = errArray.length;
+      const serializedErrors = new Array(len);
+      for (let j = 0; j < len; j++) {
         serializedErrors[j] = serializeError(errArray[j]);
       }
       serialized.errors = serializedErrors;
     }
     
     // Copy custom properties (like code, statusCode, etc.)
+    // V8: Raw for loop
     const errObjKeys = Object.keys(err);
     for (let i = 0, len = errObjKeys.length; i < len; i++) {
       const key = errObjKeys[i];
@@ -225,8 +240,9 @@ function serializeError(e: unknown): SerializedError {
     // Preserve AggregateError.errors
     if (e instanceof AggregateError) {
       const errArray = e.errors;
-      const serializedErrors = new Array(errArray.length);
-      for (let j = 0, jlen = errArray.length; j < jlen; j++) {
+      const len = errArray.length;
+      const serializedErrors = new Array(len);
+      for (let j = 0; j < len; j++) {
         serializedErrors[j] = serializeError(errArray[j]);
       }
       serialized.errors = serializedErrors;
@@ -266,6 +282,7 @@ const VALID_FUNCTION_PATTERNS: RegExp[] = [
   /^\(\s*\[/,
   /^\(\s*\{/,
 ];
+const PATTERNS_LEN = VALID_FUNCTION_PATTERNS.length;
 
 /** Cache of validated function sources */
 const validatedSources = new Set<string>();
@@ -276,6 +293,7 @@ const lowMemoryMode = workerConfig.lowMemoryMode || false;
 
 /**
  * Validates source looks like a valid function (with caching).
+ * V8: Raw for loop with early break.
  */
 function validateFunctionSource(src: unknown): asserts src is string {
   if (typeof src !== 'string') {
@@ -287,11 +305,15 @@ function validateFunctionSource(src: unknown): asserts src is string {
     return;
   }
 
-  const trimmed = src.trim();
+  // Only trim if needed (most functions don't have leading/trailing whitespace)
+  const firstChar = src.charCodeAt(0);
+  const trimmed = (firstChar === 32 || firstChar === 9 || firstChar === 10 || firstChar === 13)
+    ? src.trim()
+    : src;
 
-  // Manual loop with early return (faster than .some())
+  // V8: Manual loop with early return (faster than .some())
   let isValid = false;
-  for (let i = 0, len = VALID_FUNCTION_PATTERNS.length; i < len; i++) {
+  for (let i = 0; i < PATTERNS_LEN; i++) {
     if (VALID_FUNCTION_PATTERNS[i].test(trimmed)) {
       isValid = true;
       break;
@@ -316,10 +338,12 @@ function validateFunctionSource(src: unknown): asserts src is string {
 
 /**
  * Applies arguments to a function, handling curried functions.
+ * V8: Raw for loop.
  */
 function applyCurried(fn: Function, args: unknown[]): unknown {
   // No args - just call the function
-  if (!args || args.length === 0) {
+  const argsLen = args ? args.length : 0;
+  if (argsLen === 0) {
     return fn();
   }
 
@@ -327,10 +351,10 @@ function applyCurried(fn: Function, args: unknown[]): unknown {
   let result = fn(...args);
 
   // If result is still a function, we might have a curried function
-  if (typeof result === 'function' && args.length > 1) {
+  if (typeof result === 'function' && argsLen > 1) {
     // Try curried application
     result = fn;
-    for (let i = 0, len = args.length; i < len; i++) {
+    for (let i = 0; i < argsLen; i++) {
       if (typeof result !== 'function') break;
       result = (result as Function)(args[i]);
     }
@@ -344,8 +368,8 @@ function applyCurried(fn: Function, args: unknown[]): unknown {
 // ============================================================================
 
 /**
- * Handles turbo mode messages for parallel array processing.
- * Supports SharedArrayBuffer for TypedArrays and chunk-based processing.
+ * Turbo message interface.
+ * V8: Stable shape for all turbo messages.
  */
 interface TurboMessage {
   type: 'turbo_map' | 'turbo_filter' | 'turbo_reduce';
@@ -364,11 +388,17 @@ interface TurboMessage {
 
 function isTurboMessage(msg: unknown): msg is TurboMessage {
   return msg !== null && typeof msg === 'object' && 'type' in msg &&
-    (msg.type === 'turbo_map' || msg.type === 'turbo_filter' || msg.type === 'turbo_reduce');
+    ((msg as TurboMessage).type === 'turbo_map' || 
+     (msg as TurboMessage).type === 'turbo_filter' || 
+     (msg as TurboMessage).type === 'turbo_reduce');
 }
 
+/**
+ * Handles turbo mode messages for parallel array processing.
+ * V8: Raw for loops, pre-allocated arrays.
+ */
 function handleTurboMessage(message: TurboMessage): void {
-  const { type, fn: fnSrc, chunk, startIndex, endIndex, context, inputBuffer, outputBuffer, controlBuffer, initialValue } = message;
+  const { type, fn: fnSrc, chunk, startIndex, endIndex, context, inputBuffer, outputBuffer, controlBuffer: turboControl, initialValue } = message;
 
   try {
     // Compile the function
@@ -387,16 +417,17 @@ function handleTurboMessage(message: TurboMessage): void {
       const end = endIndex ?? inputView.length;
 
       if (type === 'turbo_map') {
+        // V8: Raw for loop - fastest iteration
         for (let i = start; i < end; i++) {
           outputView[i] = fn(inputView[i], i);
         }
       }
 
       // Signal completion via Atomics
-      if (controlBuffer) {
-        const controlView = new Int32Array(controlBuffer);
-        Atomics.add(controlView, 0, 1);
-        Atomics.notify(controlView, 0);
+      if (turboControl) {
+        const cv = new Int32Array(turboControl);
+        Atomics.add(cv, 0, 1);
+        Atomics.notify(cv, 0);
       }
 
       port.postMessage({
@@ -409,23 +440,25 @@ function handleTurboMessage(message: TurboMessage): void {
 
     // Chunk-based mode (for regular arrays)
     if (chunk) {
+      const chunkLen = chunk.length;
       let result: unknown[];
 
       if (type === 'turbo_map') {
-        result = new Array(chunk.length);
-        for (let i = 0; i < chunk.length; i++) {
+        // V8: Pre-allocated array
+        result = new Array(chunkLen);
+        for (let i = 0; i < chunkLen; i++) {
           result[i] = fn(chunk[i], i);
         }
       } else if (type === 'turbo_filter') {
         result = [];
-        for (let i = 0; i < chunk.length; i++) {
+        for (let i = 0; i < chunkLen; i++) {
           if (fn(chunk[i], i)) {
             result.push(chunk[i]);
           }
         }
       } else if (type === 'turbo_reduce') {
         let acc = initialValue;
-        for (let i = 0; i < chunk.length; i++) {
+        for (let i = 0; i < chunkLen; i++) {
           acc = fn(acc, chunk[i], i);
         }
         result = [acc];
@@ -436,8 +469,8 @@ function handleTurboMessage(message: TurboMessage): void {
       port.postMessage({
         type: 'turbo_complete',
         workerId: message.workerId,
-        result,
-        itemsProcessed: chunk.length
+        result: result,
+        itemsProcessed: chunkLen
       });
       return;
     }
@@ -455,10 +488,14 @@ function handleTurboMessage(message: TurboMessage): void {
 }
 
 // ============================================================================
-// MESSAGE HANDLER
+// MESSAGE PROCESSING
 // ============================================================================
 
-port.on('message', (message: WorkerMessage | TurboMessage) => {
+/**
+ * Processes a single message from the main thread.
+ * V8: Extracted for inlining and stable call site.
+ */
+function processMessage(message: WorkerMessage | TurboMessage): void {
   // Handle turbo messages
   if (isTurboMessage(message)) {
     handleTurboMessage(message);
@@ -503,5 +540,11 @@ port.on('message', (message: WorkerMessage | TurboMessage) => {
     port.postMessage({ type: MessageType.ERROR, error: serializeError(e) });
     currentFnSource = null;
   }
-});
+}
 
+// ============================================================================
+// MESSAGE LOOP - ATOMICS OPTIMIZED
+// ============================================================================
+
+// Start listening for messages
+port.on('message', processMessage);

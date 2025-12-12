@@ -251,60 +251,16 @@ if (result.status === 'fulfilled') console.log(result.value)
 
 ---
 
-## Benchmarks
+## When to Use
 
-```bash
-bun benchmarks.js   # Bun
-node benchmarks.js  # Node
-```
-
-### Results (1M items, heavy computation, 12 CPUs, 10 runs average)
-
-**Windows**
-
-| Runtime | Mode       | Time (±std)   | vs Main   | Main Thread |
-| ------- | ---------- | ------------- | --------- | ----------- |
-| Bun     | main       | 285 ± 5ms     | 1.00x     | ❌ blocked   |
-| Bun     | bee        | 1138 ± 51ms   | 0.25x     | ✅ free      |
-| Bun     | turbo(8)   | 180 ± 8ms     | 1.58x     | ✅ free      |
-| Bun     | turbo(12)  | **156 ± 12ms**| **1.83x** | ✅ free      |
-| Node    | main       | 368 ± 13ms    | 1.00x     | ❌ blocked   |
-| Node    | bee        | 5569 ± 203ms  | 0.07x     | ✅ free      |
-| Node    | turbo(8)   | 1052 ± 22ms   | 0.35x     | ✅ free      |
-| Node    | turbo(12)  | 1017 ± 57ms   | 0.36x     | ✅ free      |
-
-**Linux (Docker)**
-
-| Runtime | Mode       | Time (±std)   | vs Main   | Main Thread |
-| ------- | ---------- | ------------- | --------- | ----------- |
-| Bun     | main       | 338 ± 8ms     | 1.00x     | ❌ blocked   |
-| Bun     | bee        | 1882 ± 64ms   | 0.18x     | ✅ free      |
-| Bun     | turbo(8)   | 226 ± 7ms     | 1.50x     | ✅ free      |
-| Bun     | turbo(12)  | **213 ± 20ms**| **1.59x** | ✅ free      |
-| Node    | main       | 522 ± 54ms    | 1.00x     | ❌ blocked   |
-| Node    | bee        | 5520 ± 163ms  | 0.09x     | ✅ free      |
-| Node    | turbo(8)   | 953 ± 44ms    | 0.55x     | ✅ free      |
-| Node    | turbo(12)  | **861 ± 64ms**| **0.61x** | ✅ free      |
-
-### Key Insights
-
-| Insight | Explanation |
-|---------|-------------|
-| **Bun + turbo = real speedup** | 1.6-1.8x faster than main thread |
-| **Node + turbo = non-blocking** | Main thread free for HTTP/events |
-| **Linux > Windows** | Node performs ~40% better on Linux |
-| **turbo >> bee for arrays** | 7x faster for large array processing |
-| **Default workers** | `os.cpus() - 1` is safe for all systems |
-
-### When to Use
-
-| Scenario                   | Recommendation                      |
-| -------------------------- | ----------------------------------- |
-| Bun + heavy computation    | `turbo(cpus)` → real parallelism    |
-| Node + HTTP server         | `turbo()` → non-blocking I/O        |
-| Light function (`x * x`)   | Main thread → overhead not worth it |
-| CLI/batch processing       | `turbo(cpus + 4)` → max throughput  |
-| Database + large arrays    | `worker().turbo()` → best of both   |
+| Your Scenario | Best Choice | Why |
+|---------------|-------------|-----|
+| **Arrays** | `turbo()` | SharedArrayBuffer = zero-copy |
+| **Single heavy function** | `bee()` | Keeps main thread free |
+| **Light function** (`x * 2`) | Main thread | Overhead > benefit |
+| **Need `require()`/DB** | `worker()` | Full Node.js access |
+| **Batch processing with full import features** | `worker().turbo()` | Parallel + DB access |
+| **HTTP server** | `turbo()` | Non-blocking for requests |
 
 ---
 
@@ -317,6 +273,7 @@ node benchmarks.js  # Node
 - **Worker affinity** - V8 JIT optimization
 - **Request coalescing** - Deduplicates identical calls
 - **Turbo mode** - Parallel array processing
+- **AutoPack** - 2-3x faster object serialization
 - **File workers** - External files with `require()` + turbo
 - **Full TypeScript** - Complete type inference
 

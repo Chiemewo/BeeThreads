@@ -226,9 +226,9 @@ function createSandbox(context?: Record<string, unknown> | null): Record<string,
   if (context) {
     // Reconstruct any serialized functions first
     const processedContext = reconstructFunctions(context);
-    const keys = Object.keys(processedContext);
-    for (let i = 0, len = keys.length; i < len; i++) {
-      sandbox[keys[i]] = processedContext[keys[i]];
+    // Fast assign - direct iteration without keys array
+    for (const key in processedContext) {
+      sandbox[key] = processedContext[key];
     }
   }
 
@@ -334,12 +334,14 @@ export function createLRUCache<T>(maxSize: number = DEFAULT_MAX_SIZE, ttl: numbe
     /**
      * Clears all entries from the cache.
      * Also cancels all pending expiration timers.
+     * V8: Uses forEach which is optimized for Map iteration.
      */
     clear(): void {
       // Cancel all pending timers before clearing
-      for (const entry of cache.values()) {
+      // V8: Map.forEach is faster than for...of for this case
+      cache.forEach((entry) => {
         if (entry.timeoutId) clearTimeout(entry.timeoutId);
-      }
+      });
       cache.clear();
     },
 
@@ -433,8 +435,9 @@ export function createContextKey(context: unknown, level: number = 0): string {
   if (!keysLen) return '';
 
   // Handle objects recursively. Sort for deterministic ordering.
-  // Optimized: single loop instead of .sort().map().filter().join() chain
-  keys.sort();
+  // Skip sort for single key (common case)
+  if (keysLen > 1) keys.sort();
+  
   let objResult = '{';
   let first = true;
   for (let i = 0; i < keysLen; i++) {
@@ -475,8 +478,12 @@ export function createFunctionCache(maxSize: number = DEFAULT_MAX_SIZE, ttl = DE
      * @returns Compiled, executable function
      */
     getOrCompile(fnString: string, context?: Record<string, unknown> | null): Function {
-      // Check if context has any actual properties
-      const hasContext = context && Object.keys(context).length > 0;
+      // Check if context has any actual properties (fast check without full iteration)
+      let hasContext = false;
+      if (context) {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        for (const _ in context) { hasContext = true; break; }
+      }
 
       // Create optimized cache key (faster than JSON.stringify)
       const contextKey = hasContext ? createContextKey(context) : '';

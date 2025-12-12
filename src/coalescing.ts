@@ -182,7 +182,8 @@ function createRequestKey(
   const fnHash = fastHash(fnString);
   
   // Use createContextKey for args and context (faster than JSON.stringify)
-  const argsKey = args.length > 0 ? createContextKey(args) : '';
+  // Note: createContextKey handles empty arrays/objects efficiently
+  const argsKey = createContextKey(args);
   const contextKey = context ? createContextKey(context) : '';
   
   return `${fnHash}:${argsKey}:${contextKey}`;

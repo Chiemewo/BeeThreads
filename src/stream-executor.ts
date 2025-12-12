@@ -309,11 +309,14 @@ export function createStreamExecutor<T = unknown>(state: StreamExecutorState): S
               cleanup();
             });
 
-            const message = { fn: fnString, args, context };
+            // V8: Monomorphic message shape
+            const message = { fn: fnString, args: args, context: context };
             // Cast needed: ArrayBufferLike includes SharedArrayBuffer which is already shared, not transferred
-            transfer.length > 0
-              ? streamWorker.postMessage(message, transfer as ArrayBuffer[])
-              : streamWorker.postMessage(message);
+            if (transfer.length > 0) {
+              streamWorker.postMessage(message, transfer as ArrayBuffer[]);
+            } else {
+              streamWorker.postMessage(message);
+            }
           } catch (err) {
             controller.error(err);
             cleanup();
