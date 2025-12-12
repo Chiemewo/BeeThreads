@@ -29,9 +29,7 @@ const result = await bee((x: number) => x * 2)(21) // 42
 
 ---
 
-## API Overview
-
-### `bee()` - Simple Curried API
+## `bee()` - Simple Curried API
 
 ```ts
 // No arguments
@@ -45,107 +43,19 @@ const TAX = 0.2
 await bee((price: number) => price * (1 + TAX))(100, { beeClosures: { TAX } }) // 120
 ```
 
-### `beeThreads.run()` - Full Fluent API
+---
+
+## Fluent API Methods
+
+### `beeThreads.run()` - Full Control
 
 ```ts
 await beeThreads
 	.run((a: number, b: number) => a + b)
 	.usingParams(10, 20)
 	.setContext({ multiplier: 2 })
-	.priority('high')
 	.execute() // 30
 ```
-
-### `beeThreads.turbo()` - Parallel Arrays
-
-```ts
-const numbers = [1, 2, 3, 4, 5, 6, 7, 8]
-
-const squares = await beeThreads.turbo(numbers).map((x: number) => x * x)
-const evens = await beeThreads.turbo(numbers).filter((x: number) => x % 2 === 0)
-const sum = await beeThreads.turbo(numbers).reduce((a: number, b: number) => a + b, 0)
-```
-
-### `beeThreads.worker()` - File Workers
-
-```ts
-// workers/find-user.ts
-import { db } from '../database'
-export default async function (id: number): Promise<User> {
-	return db.query('SELECT * FROM users WHERE id = ?', [id])
-}
-
-// main.ts
-import type findUser from './workers/find-user'
-const user = await beeThreads.worker<typeof findUser>('./workers/find-user')(123)
-```
-
-### `beeThreads.stream()` - Generators
-
-```ts
-const stream = beeThreads
-	.stream(function* (n: number) {
-		for (let i = 1; i <= n; i++) yield i * i
-	})
-	.usingParams(5)
-	.execute()
-
-for await (const value of stream) console.log(value) // 1, 4, 9, 16, 25
-```
-
----
-
-## File Workers
-
-When you need **`require()`**, **database connections**, or **external modules** in workers.
-
-### Single Execution
-
-```ts
-// workers/hash-password.ts
-import bcrypt from 'bcrypt'
-export default async function (password: string): Promise<string> {
-	return bcrypt.hash(password, 12)
-}
-
-// main.ts
-import type hashPassword from './workers/hash-password'
-const hash = await beeThreads.worker<typeof hashPassword>('./workers/hash-password')('secret123')
-```
-
-### Turbo Mode (Parallel Arrays)
-
-```ts
-// workers/process-users.ts
-import { db } from '../database'
-import { calculateScore } from '../utils'
-
-export default async function (users: User[]): Promise<ProcessedUser[]> {
-	return Promise.all(
-		users.map(async user => ({
-			...user,
-			score: await calculateScore(user),
-			data: await db.fetch(user.id),
-		}))
-	)
-}
-
-// main.ts - 10,000 users across 8 workers
-const results = await beeThreads.worker('./workers/process-users').turbo(users, { workers: 8 })
-```
-
-### When to Use
-
-| Need                   | Use                |
-| ---------------------- | ------------------ |
-| Pure computation       | `bee()` / `turbo()` |
-| Database/Redis         | `worker()`         |
-| External modules       | `worker()`         |
-| Large array + DB       | `worker().turbo()` |
-
----
-
-## Fluent API Methods
 
 ### `.setContext()` - Inject Variables
 
@@ -187,7 +97,7 @@ await beeThreads.run(() => processPayment()).priority('high').execute()
 await beeThreads.run(() => generateReport()).priority('low').execute()
 ```
 
-### `.transfer()` - Zero-copy
+### `.transfer()` - Zero-copy ArrayBuffer
 
 ```ts
 const buffer = new Uint8Array(10_000_000)
@@ -209,6 +119,96 @@ const buffer = await beeThreads
 
 Buffer.isBuffer(buffer) // true
 ```
+
+### `beeThreads.stream()` - Generators
+
+```ts
+const stream = beeThreads
+	.stream(function* (n: number) {
+		for (let i = 1; i <= n; i++) yield i * i
+	})
+	.usingParams(5)
+	.execute()
+
+for await (const value of stream) console.log(value) // 1, 4, 9, 16, 25
+```
+
+---
+
+## `beeThreads.turbo()` - Parallel Arrays
+
+Process arrays across **ALL CPU cores**. Non-blocking (main thread stays free).
+
+```ts
+const numbers = [1, 2, 3, 4, 5, 6, 7, 8]
+
+const squares = await beeThreads.turbo(numbers).map((x: number) => x * x)
+const evens = await beeThreads.turbo(numbers).filter((x: number) => x % 2 === 0)
+const sum = await beeThreads.turbo(numbers).reduce((a: number, b: number) => a + b, 0)
+
+// Custom worker count
+await beeThreads.turbo(numbers).setWorkers(8).map((x: number) => x * x)
+
+// With context
+const factor = 2.5
+await beeThreads.turbo(data, { context: { factor } }).map((x: number) => x * factor)
+```
+
+> **Default workers:** `os.cpus().length - 1` (leaves one core for main thread)
+
+---
+
+## `beeThreads.worker()` - File Workers
+
+When you need **`require()`**, **database connections**, or **external modules**.
+
+```ts
+// workers/hash-password.ts
+import bcrypt from 'bcrypt'
+export default async function (password: string): Promise<string> {
+	return bcrypt.hash(password, 12)
+}
+
+// main.ts
+import type hashPassword from './workers/hash-password'
+const hash = await beeThreads.worker<typeof hashPassword>('./workers/hash-password')('secret123')
+```
+
+---
+
+## `worker().turbo()` - File Workers + Parallel Arrays
+
+Process large arrays with **database access** across multiple workers.
+
+```ts
+// workers/process-users.ts
+import { db } from '../database'
+import { calculateScore } from '../utils'
+
+export default async function (users: User[]): Promise<ProcessedUser[]> {
+	return Promise.all(
+		users.map(async user => ({
+			...user,
+			score: await calculateScore(user),
+			data: await db.fetch(user.id),
+		}))
+	)
+}
+
+// main.ts - 10,000 users across 8 workers
+const results = await beeThreads.worker('./workers/process-users').turbo(users, { workers: 8 })
+```
+
+> **Default workers:** `os.cpus().length - 1` (if not specified)
+
+### When to Use
+
+| Need                 | Use               |
+| -------------------- | ----------------- |
+| Pure computation     | `bee()` / `turbo()` |
+| Database/Redis       | `worker()`        |
+| External modules     | `worker()`        |
+| Large array + DB     | `worker().turbo()` |
 
 ---
 
@@ -259,12 +259,12 @@ node benchmarks.js  # Node
 
 ### Results (1M items, 12 CPUs)
 
-| Runtime | Mode       | Time    | vs Main | Main Thread |
-| ------- | ---------- | ------- | ------- | ----------- |
-| Bun     | main       | 285ms   | 1.00x   | ❌ blocked   |
+| Runtime | Mode       | Time      | vs Main   | Main Thread |
+| ------- | ---------- | --------- | --------- | ----------- |
+| Bun     | main       | 285ms     | 1.00x     | ❌ blocked   |
 | Bun     | turbo(12)  | **156ms** | **1.83x** | ✅ free      |
-| Node    | main       | 368ms   | 1.00x   | ❌ blocked   |
-| Node    | turbo(12)  | 1017ms  | 0.36x   | ✅ free      |
+| Node    | main       | 368ms     | 1.00x     | ❌ blocked   |
+| Node    | turbo(12)  | 1017ms    | 0.36x     | ✅ free      |
 
 **Key:** Bun + turbo = real speedup. Node + turbo = non-blocking I/O.
 
