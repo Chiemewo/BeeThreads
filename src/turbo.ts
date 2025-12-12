@@ -106,6 +106,8 @@ function isTypedArray(value: unknown): value is NumericTypedArray {
 // ============================================================================
 
 export interface TurboExecutor<TItem> {
+  /** Set the number of workers to use. Returns a new executor. */
+  setWorkers(count: number): TurboExecutor<TItem>;
   map<TResult>(fn: (item: TItem, index: number) => TResult): Promise<TResult[]>;
   mapWithStats<TResult>(fn: (item: TItem, index: number) => TResult): Promise<TurboResult<TResult>>;
   filter(fn: (item: TItem, index: number) => boolean): Promise<TItem[]>;
@@ -132,6 +134,13 @@ export function createTurboExecutor<TItem>(
 ): TurboExecutor<TItem> {
   // V8: Monomorphic object shape - all methods declared upfront
   const executor: TurboExecutor<TItem> = {
+    setWorkers(count: number): TurboExecutor<TItem> {
+      if (!Number.isInteger(count) || count < 1) {
+        throw new TypeError('setWorkers() requires a positive integer');
+      }
+      return createTurboExecutor<TItem>(data, { ...options, workers: count });
+    },
+
     map<TResult>(fn: (item: TItem, index: number) => TResult): Promise<TResult[]> {
       const fnString = fn.toString();
       return executeTurboMap<TResult>(fnString, data as unknown[], options);
@@ -897,6 +906,13 @@ export function createMaxExecutor<TItem>(
 ): TurboExecutor<TItem> {
   // V8: Monomorphic object shape
   const executor: TurboExecutor<TItem> = {
+    setWorkers(count: number): TurboExecutor<TItem> {
+      if (!Number.isInteger(count) || count < 1) {
+        throw new TypeError('setWorkers() requires a positive integer');
+      }
+      return createMaxExecutor<TItem>(data, { ...options, workers: count });
+    },
+
     map<TResult>(fn: (item: TItem, index: number) => TResult): Promise<TResult[]> {
       const fnString = fn.toString();
       return executeMaxMap<TResult>(fnString, data as unknown[], options);

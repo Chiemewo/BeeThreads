@@ -503,6 +503,68 @@ const stream = beeThreads
 
 ---
 
+## Benchmarks
+
+Run the benchmark yourself:
+
+```bash
+bun benchmarks.js   # Bun
+node benchmarks.js  # Node
+```
+
+### Results (1M items, heavy function, 12 CPUs, 10 runs avg)
+
+**Bun** - Real parallel speedup:
+
+| Mode | Time (±std) | Speedup | Main Thread |
+|------|-------------|---------|-------------|
+| main | 285±5ms | 1.00x | ❌ blocked |
+| bee | 1138±51ms | 0.25x | ✅ free |
+| turbo(4) | 255±7ms | 1.12x | ✅ free |
+| turbo(8) | 180±8ms | **1.58x** | ✅ free |
+| **turbo(12)** | **156±12ms** | **1.83x** | ✅ free |
+| turbo(16) | 204±28ms | 1.40x | ✅ free |
+
+**Node** - Non-blocking I/O (slower, but frees main thread):
+
+| Mode | Time (±std) | Speedup | Main Thread |
+|------|-------------|---------|-------------|
+| main | 368±13ms | 1.00x | ❌ blocked |
+| bee | 5569±203ms | 0.07x | ✅ free |
+| turbo(4) | 1793±85ms | 0.21x | ✅ free |
+| turbo(8) | 1052±22ms | 0.35x | ✅ free |
+| **turbo(12)** | **1017±57ms** | **0.36x** | ✅ free |
+| turbo(16) | 1099±98ms | 0.34x | ✅ free |
+
+### Key Insights
+
+- **Bun + turbo(cpus)**: Up to **1.83x faster** than main thread
+- **bee/turbo**: Non-blocking - main thread stays **free for HTTP/I/O**
+- **Node + turbo**: Slower, but useful for keeping servers responsive
+- **bee vs turbo**: turbo is **7x faster** than bee for large arrays
+- **Default workers**: `cpus - 1` (safe for all systems)
+
+### Customize Workers
+
+```js
+// Method chain
+await beeThreads.turbo(data).setWorkers(12).map(fn)
+
+// Or via options
+await beeThreads.turbo(data, { workers: 12 }).map(fn)
+```
+
+### When to Use
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Bun + heavy function | `turbo(cpus)` → real speedup |
+| Node + HTTP server | `turbo()` → non-blocking I/O |
+| Light function (`x*x`) | Main thread → overhead not worth it |
+| CLI/batch processing | `turbo(cpus + 4)` → max throughput |
+
+---
+
 ## Why bee-threads?
 
 - **Zero dependencies** - Lightweight and secure

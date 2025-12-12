@@ -3246,6 +3246,29 @@ async function runTests(): Promise<void> {
     assert.deepStrictEqual(result, data, 'Order must be preserved');
   });
 
+  await test('turbo().setWorkers(n) customizes worker count', async () => {
+    const data = [1, 2, 3, 4, 5];
+    const result = await beeThreads.turbo(data, { force: true }).setWorkers(2).map((x: number) => x * 2);
+    
+    assert.deepStrictEqual(result, [2, 4, 6, 8, 10], 'setWorkers should work');
+  });
+
+  await test('turbo().setWorkers() throws for invalid input', () => {
+    const data = [1, 2, 3];
+    
+    assert.throws(() => {
+      beeThreads.turbo(data).setWorkers(0);
+    }, TypeError);
+    
+    assert.throws(() => {
+      beeThreads.turbo(data).setWorkers(-1);
+    }, TypeError);
+    
+    assert.throws(() => {
+      beeThreads.turbo(data).setWorkers(1.5);
+    }, TypeError);
+  });
+
   // ---------- TURBO BENCHMARKS ----------
   section('Turbo Mode - Benchmarks');
 
