@@ -250,23 +250,27 @@ export function createTurboExecutor<TItem>(
 
     map<TResult>(fn: (item: TItem, index: number) => TResult): Promise<TResult[]> {
       const fnString = fn.toString();
-      return executeTurboMap<TResult>(fnString, data as unknown[], options);
+      const fnHash = fastHash(fnString);
+      return executeTurboMap<TResult>(fnString, fnHash, data as unknown[], options);
     },
 
     mapWithStats<TResult>(fn: (item: TItem, index: number) => TResult): Promise<TurboResult<TResult>> {
       const fnString = fn.toString();
+      const fnHash = fastHash(fnString);
       const startTime = Date.now();
-      return executeTurboMapWithStats<TResult>(fnString, data as unknown[], options, startTime);
+      return executeTurboMapWithStats<TResult>(fnString, fnHash, data as unknown[], options, startTime);
     },
 
     filter(fn: (item: TItem, index: number) => boolean): Promise<TItem[]> {
       const fnString = fn.toString();
-      return executeTurboFilter<TItem>(fnString, data as unknown[], options);
+      const fnHash = fastHash(fnString);
+      return executeTurboFilter<TItem>(fnString, fnHash, data as unknown[], options);
     },
 
     reduce<TResult>(fn: (acc: TResult, item: TItem, index: number) => TResult, initialValue: TResult): Promise<TResult> {
       const fnString = fn.toString();
-      return executeTurboReduce<TResult>(fnString, data as unknown[], initialValue, options);
+      const fnHash = fastHash(fnString);
+      return executeTurboReduce<TResult>(fnString, fnHash, data as unknown[], initialValue, options);
     }
   };
 
@@ -279,15 +283,17 @@ export function createTurboExecutor<TItem>(
 
 async function executeTurboMap<T>(
   fnString: string,
+  fnHash: string,
   data: unknown[],
   options: TurboOptions
 ): Promise<T[]> {
-  const result = await executeTurboMapWithStats<T>(fnString, data, options, Date.now());
+  const result = await executeTurboMapWithStats<T>(fnString, fnHash, data, options, Date.now());
   return result.data;
 }
 
 async function executeTurboMapWithStats<T>(
   fnString: string,
+  fnHash: string,
   data: unknown[],
   options: TurboOptions,
   startTime: number
@@ -297,7 +303,7 @@ async function executeTurboMapWithStats<T>(
 
   // Small array fallback
   if (!options.force && dataLength < TURBO_THRESHOLD) {
-    return fallbackSingleExecution<T>(fnString, data, options, startTime);
+    return fallbackSingleExecution<T>(fnString, fnHash, data, options, startTime);
   }
 
   // Calculate workers (V8: simple math, no method chains)
@@ -309,11 +315,11 @@ async function executeTurboMapWithStats<T>(
 
   // TypedArray path - SharedArrayBuffer
   if (isTyped) {
-    return executeTurboTypedArray<T>(fnString, data as NumericTypedArray, actualWorkers, chunkSize, options, startTime);
+    return executeTurboTypedArray<T>(fnString, fnHash, data as NumericTypedArray, actualWorkers, chunkSize, options, startTime);
   }
 
   // Regular array path (with AutoPack support)
-  return executeTurboRegularArray<T>(fnString, data, actualWorkers, chunkSize, options, startTime);
+  return executeTurboRegularArray<T>(fnString, fnHash, data, actualWorkers, chunkSize, options, startTime);
 }
 
 // ============================================================================
@@ -322,6 +328,7 @@ async function executeTurboMapWithStats<T>(
 
 async function executeTurboTypedArray<T>(
   fnString: string,
+  fnHash: string,
   data: NumericTypedArray,
   numWorkers: number,
   chunkSize: number,
@@ -376,7 +383,7 @@ async function executeTurboTypedArray<T>(
       packedStrings: undefined
     };
 
-    promises[i] = executeWorkerTurbo(fnString, message);
+    promises[i] = executeWorkerTurbo(fnHash, message);
     workerCount++;
   }
 
@@ -416,6 +423,7 @@ async function executeTurboTypedArray<T>(
 
 async function executeTurboRegularArray<T>(
   fnString: string,
+  fnHash: string,
   data: unknown[],
   numWorkers: number,
   chunkSize: number,
@@ -423,7 +431,6 @@ async function executeTurboRegularArray<T>(
   startTime: number
 ): Promise<TurboResult<T>> {
   const dataLength = data.length;
-  const fnHash = fastHash(fnString);
   
   // Determine serialization strategy
   const packType = getPackType(data, options);
@@ -528,6 +535,7 @@ async function executeTurboRegularArray<T>(
 
 async function executeTurboFilter<T>(
   fnString: string,
+  fnHash: string,
   data: unknown[],
   options: TurboOptions
 ): Promise<T[]> {
@@ -545,7 +553,6 @@ async function executeTurboFilter<T>(
     return result;
   }
 
-  const fnHash = fastHash(fnString);
   const maxWorkers = options.workers !== undefined ? options.workers : config.poolSize;
   const calculatedWorkers = Math.ceil(dataLength / MIN_ITEMS_PER_WORKER);
   const numWorkers = calculatedWorkers < maxWorkers ? calculatedWorkers : maxWorkers;
@@ -606,6 +613,7 @@ async function executeTurboFilter<T>(
 
 async function executeTurboReduce<R>(
   fnString: string,
+  fnHash: string,
   data: unknown[],
   initialValue: R,
   options: TurboOptions
@@ -622,7 +630,6 @@ async function executeTurboReduce<R>(
     return acc;
   }
 
-  const fnHash = fastHash(fnString);
   const maxWorkers = options.workers !== undefined ? options.workers : config.poolSize;
   const calculatedWorkers = Math.ceil(dataLength / MIN_ITEMS_PER_WORKER);
   const numWorkers = calculatedWorkers < maxWorkers ? calculatedWorkers : maxWorkers;
@@ -673,10 +680,9 @@ async function executeTurboReduce<R>(
 // ============================================================================
 
 async function executeWorkerTurbo(
-  fnString: string,
+  fnHash: string,
   message: TurboWorkerMessage
 ): Promise<void> {
-  const fnHash = fastHash(fnString);
   const { entry, worker, temporary } = await requestWorker('normal', 'high', fnHash);
 
   return new Promise((resolve, reject) => {
@@ -951,11 +957,11 @@ function executeReduceChunkDirect<R>(
 
 async function fallbackSingleExecution<T>(
   fnString: string,
+  fnHash: string,
   data: unknown[],
   options: TurboOptions,
   startTime: number
 ): Promise<TurboResult<T>> {
-  const fnHash = fastHash(fnString);
   const { entry, worker, temporary } = await requestWorker('normal', 'normal', fnHash);
   const dataLength = data.length;
 
@@ -1067,23 +1073,27 @@ export function createMaxExecutor<TItem>(
 
     map<TResult>(fn: (item: TItem, index: number) => TResult): Promise<TResult[]> {
       const fnString = fn.toString();
-      return executeMaxMap<TResult>(fnString, data as unknown[], options);
+      const fnHash = fastHash(fnString);
+      return executeMaxMap<TResult>(fnString, fnHash, data as unknown[], options);
     },
 
     mapWithStats<TResult>(fn: (item: TItem, index: number) => TResult): Promise<TurboResult<TResult>> {
       const fnString = fn.toString();
+      const fnHash = fastHash(fnString);
       const startTime = Date.now();
-      return executeMaxMapWithStats<TResult>(fnString, data as unknown[], options, startTime);
+      return executeMaxMapWithStats<TResult>(fnString, fnHash, data as unknown[], options, startTime);
     },
 
     filter(fn: (item: TItem, index: number) => boolean): Promise<TItem[]> {
       const fnString = fn.toString();
-      return executeMaxFilter<TItem>(fnString, data as unknown[], options);
+      const fnHash = fastHash(fnString);
+      return executeMaxFilter<TItem>(fnString, fnHash, data as unknown[], options);
     },
 
     reduce<TResult>(fn: (acc: TResult, item: TItem, index: number) => TResult, initialValue: TResult): Promise<TResult> {
       const fnString = fn.toString();
-      return executeMaxReduce<TResult>(fnString, data as unknown[], initialValue, options);
+      const fnHash = fastHash(fnString);
+      return executeMaxReduce<TResult>(fnString, fnHash, data as unknown[], initialValue, options);
     }
   };
 
@@ -1096,15 +1106,17 @@ export function createMaxExecutor<TItem>(
 
 async function executeMaxMap<T>(
   fnString: string,
+  fnHash: string,
   data: unknown[],
   options: MaxOptions
 ): Promise<T[]> {
-  const result = await executeMaxMapWithStats<T>(fnString, data, options, Date.now());
+  const result = await executeMaxMapWithStats<T>(fnString, fnHash, data, options, Date.now());
   return result.data;
 }
 
 async function executeMaxMapWithStats<T>(
   fnString: string,
+  fnHash: string,
   data: unknown[],
   options: MaxOptions,
   startTime: number
@@ -1114,7 +1126,7 @@ async function executeMaxMapWithStats<T>(
   const dataLength = actualData.length;
 
   if (!options.force && dataLength < TURBO_THRESHOLD) {
-    return fallbackSingleExecution<T>(fnString, actualData, options, startTime);
+    return fallbackSingleExecution<T>(fnString, fnHash, actualData, options, startTime);
   }
 
   const maxWorkers = options.workers !== undefined ? options.workers : config.poolSize;
@@ -1126,7 +1138,6 @@ async function executeMaxMapWithStats<T>(
   const totalThreads = actualWorkers + 1;
   const chunkSize = options.chunkSize !== undefined ? options.chunkSize : Math.ceil(dataLength / totalThreads);
 
-  const fnHash = fastHash(fnString);
   // Force 'number' packType for converted TypedArrays (they're now number[])
   const packType = isTypedArray(data) ? 'number' : getPackType(actualData, options);
 
@@ -1234,6 +1245,7 @@ async function executeMaxMapWithStats<T>(
 
 async function executeMaxFilter<T>(
   fnString: string,
+  fnHash: string,
   data: unknown[],
   options: MaxOptions
 ): Promise<T[]> {
@@ -1252,7 +1264,6 @@ async function executeMaxFilter<T>(
     return result;
   }
 
-  const fnHash = fastHash(fnString);
   const maxWorkers = options.workers !== undefined ? options.workers : config.poolSize;
   const calculatedWorkers = Math.ceil(dataLength / MIN_ITEMS_PER_WORKER);
   const numWorkers = calculatedWorkers < maxWorkers ? calculatedWorkers : maxWorkers;
@@ -1325,6 +1336,7 @@ async function executeMaxFilter<T>(
 
 async function executeMaxReduce<R>(
   fnString: string,
+  fnHash: string,
   data: unknown[],
   initialValue: R,
   options: MaxOptions
@@ -1342,7 +1354,6 @@ async function executeMaxReduce<R>(
     return acc;
   }
 
-  const fnHash = fastHash(fnString);
   const maxWorkers = options.workers !== undefined ? options.workers : config.poolSize;
   const calculatedWorkers = Math.ceil(dataLength / MIN_ITEMS_PER_WORKER);
   const numWorkers = calculatedWorkers < maxWorkers ? calculatedWorkers : maxWorkers;
