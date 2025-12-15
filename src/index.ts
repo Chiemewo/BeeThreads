@@ -37,8 +37,8 @@
 
 import { config, pools, poolCounters, queues, metrics, RUNTIME, IS_BUN } from './config';
 import { createCurriedRunner, Executor } from './executor';
-import { warmupPool, getQueueLength } from './pool';
-import { validateTimeout, validatePoolSize, validateContextSecurity } from './validation';
+import { warmupPool, getQueueLength, fastHash } from './pool';
+import { validateTimeout, validatePoolSize, validateContextSecurity, validateFunctionSize } from './validation';
 import { deepFreeze } from './utils';
 import { createFileWorker, terminateFileWorkers } from './file-worker';
 import type { FileWorkerExecutor } from './file-worker';
@@ -148,14 +148,12 @@ export function bee<T extends (...args: any[]) => any>(fn: T): CurriedFunction<R
   }
 
   const fnString = fn.toString();
-  
+
   // Security: Validate function size (DoS prevention)
-  const fnSize = Buffer.byteLength(fnString, 'utf8');
-  if (fnSize > config.security.maxFunctionSize) {
-    throw new RangeError(
-      `Function source exceeds maximum size (${fnSize} bytes > ${config.security.maxFunctionSize} bytes limit)`
-    );
-  }
+  validateFunctionSize(fnString, config.security.maxFunctionSize);
+
+  // Compute hash once at executor creation (not at execute time)
+  const fnHash = fastHash(fnString);
 
   type R = ReturnType<T>;
   
@@ -198,12 +196,12 @@ export function bee<T extends (...args: any[]) => any>(fn: T): CurriedFunction<R
         const allArgs = accumulatedArgs.length > 0 
           ? accumulatedArgs.concat(params)
           : params;
-        return execute<R>(fnString, allArgs, { context: serializedClosures }) as unknown as CurriedFunction<R>;
+        return execute<R>(fnString, allArgs, { context: serializedClosures }, fnHash) as unknown as CurriedFunction<R>;
       }
 
       if (callArgs.length === 0) {
         // Empty call () - execute with accumulated args (returns Promise, which is PromiseLike)
-        return execute<R>(fnString, accumulatedArgs, {}) as unknown as CurriedFunction<R>;
+        return execute<R>(fnString, accumulatedArgs, {}, fnHash) as unknown as CurriedFunction<R>;
       }
 
       // Accumulate args and return new curry (thenable for await)
@@ -221,17 +219,17 @@ export function bee<T extends (...args: any[]) => any>(fn: T): CurriedFunction<R
       onFulfilled?: ((value: R) => TResult1 | PromiseLike<TResult1>) | null,
       onRejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
     ): Promise<TResult1 | TResult2> => {
-      return (execute<R>(fnString, accumulatedArgs, {}) as Promise<R>).then(onFulfilled, onRejected);
+      return (execute<R>(fnString, accumulatedArgs, {}, fnHash) as Promise<R>).then(onFulfilled, onRejected);
     };
 
     curry.catch = <TResult = never>(
       onRejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | null
     ): Promise<R | TResult> => {
-      return (execute<R>(fnString, accumulatedArgs, {}) as Promise<R>).catch(onRejected);
+      return (execute<R>(fnString, accumulatedArgs, {}, fnHash) as Promise<R>).catch(onRejected);
     };
 
     curry.finally = (onFinally?: (() => void) | null): Promise<R> => {
-      return (execute<R>(fnString, accumulatedArgs, {}) as Promise<R>).finally(onFinally);
+      return (execute<R>(fnString, accumulatedArgs, {}, fnHash) as Promise<R>).finally(onFinally);
     };
 
     // Symbol.toStringTag for full Promise compatibility (enables Promise.all, etc.)
